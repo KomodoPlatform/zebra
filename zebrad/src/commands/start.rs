@@ -29,10 +29,13 @@ use futures::{select, FutureExt};
 use tokio::sync::oneshot;
 use tower::builder::ServiceBuilder;
 
-use crate::components::{tokio::RuntimeRun, Inbound};
-use crate::config::ZebradConfig;
 use crate::{
-    components::{mempool, tokio::TokioComponent, ChainSync},
+    components::{
+        mempool, sync,
+        tokio::{RuntimeRun, TokioComponent},
+        ChainSync, Inbound,
+    },
+    config::ZebradConfig,
     prelude::*,
 };
 
@@ -51,7 +54,7 @@ impl StartCmd {
 
         info!("initializing node state");
         // TODO: use ChainTipChange to get tip changes (#2374, #2710, #2711, #2712, #2713, #2714)
-        let (state_service, latest_chain_tip, _chain_tip_change) =
+        let (state_service, latest_chain_tip, chain_tip_change) =
             zebra_state::init(config.state.clone(), config.network.network);
         let state = ServiceBuilder::new().buffer(20).service(state_service);
 
@@ -94,11 +97,24 @@ impl StartCmd {
         let (syncer, sync_status) =
             ChainSync::new(&config, peer_set.clone(), state, chain_verifier);
 
+        let sync_gossip = tokio::spawn(sync::gossip_best_tip_block_hashes(
+            sync_status.clone(),
+            chain_tip_change,
+            peer_set.clone(),
+        ));
+
+        let mempool_crawl = mempool::Crawler::spawn(peer_set, sync_status);
+
         select! {
-            result = syncer.sync().fuse() => result,
-            _ = mempool::Crawler::spawn(peer_set, sync_status).fuse() => {
-                unreachable!("The mempool crawler only stops if it panics");
-            }
+            sync_result = syncer.sync().fuse() => sync_result,
+
+            sync_gossip_result = sync_gossip.fuse() => sync_gossip_result
+                .expect("unexpected panic in the chain tip gossip task")
+                .map_err(|e| eyre!(e)),
+
+            mempool_crawl_result = mempool_crawl.fuse() => mempool_crawl_result
+                .expect("unexpected panic in the mempool crawler")
+                .map_err(|e| eyre!(e)),
         }
     }
 }
