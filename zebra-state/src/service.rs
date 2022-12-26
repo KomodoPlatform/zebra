@@ -21,9 +21,10 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::{Duration, Instant},
+    time::{Duration, Instant}, borrow::Borrow,
 };
 
+use chrono::{DateTime, Utc};
 use futures::future::FutureExt;
 use tokio::sync::{oneshot, watch};
 use tower::{util::BoxService, Service};
@@ -35,7 +36,7 @@ use tower::buffer::Buffer;
 use zebra_chain::{
     block::{self, CountedHeader},
     diagnostic::CodeTimer,
-    parameters::{Network, NetworkUpgrade},
+    parameters::{Network, NetworkUpgrade, POW_AVERAGING_WINDOW},
     transparent,
 };
 
@@ -45,7 +46,7 @@ use crate::{
         finalized_state::{FinalizedState, ZebraDb},
         non_finalized_state::{Chain, NonFinalizedState, QueuedBlocks},
         pending_utxos::PendingUtxos,
-        watch_receiver::WatchReceiver,
+        watch_receiver::WatchReceiver, check::difficulty::{POW_MEDIAN_BLOCK_SPAN, AdjustedDifficulty},
     },
     BoxError, CloneError, CommitBlockError, Config, FinalizedBlock, PreparedBlock, ReadRequest,
     ReadResponse, Request, Response, ValidateContextError,
@@ -262,6 +263,7 @@ impl StateService {
     ) -> oneshot::Receiver<Result<block::Hash, BoxError>> {
         tracing::debug!(block = %prepared.block, "queueing block for contextual verification");
         let parent_hash = prepared.block.header.previous_block_hash;
+        let current_block = prepared.block.clone();
 
         if self.mem.any_chain_contains(&prepared.hash)
             || self.disk.db().hash(prepared.height).is_some()
@@ -307,6 +309,47 @@ impl StateService {
             "Finalized state must have at least one block before committing non-finalized state",
         );
         self.queued_blocks.prune_by_height(finalized_tip_height);
+
+        // mtp (median time past) calculation to pass it in channels
+        let mut mtp: Option<DateTime<Utc>> = None;
+        let relevant_chain = self.any_ancestor_blocks(parent_hash); // prepared.block.header.previous_block_hash
+        let relevant_chain: Vec<_> = relevant_chain
+        .into_iter()
+        .take(POW_AVERAGING_WINDOW + POW_MEDIAN_BLOCK_SPAN) // we should take 17 + 11 last blocks here, bcz of difficulty context (at least 28)
+        .collect();
+
+        if relevant_chain.len() >= POW_AVERAGING_WINDOW + POW_MEDIAN_BLOCK_SPAN {
+
+            let relevant_data = relevant_chain.iter().map(|block| {
+                let b = block;
+                (
+                    b.header.difficulty_threshold,
+                    b.header.time
+                )
+            });
+
+            let mut block_times: Vec<_> = relevant_chain.iter().map(|block| {
+                block.header.time.timestamp()
+            }).take(POW_MEDIAN_BLOCK_SPAN - 1).collect();
+            block_times.push(current_block.header.time.timestamp());
+            block_times.sort();
+            let mtp_calculated = block_times[block_times.len() / 2];
+
+            let network: Network = self.network;
+
+            let difficulty_adjustment =
+            AdjustedDifficulty::new_from_block(&current_block, network, relevant_data);
+
+            mtp = Some(difficulty_adjustment.median_time_past());
+
+            let best_block = self.mem.best_chain().and_then(|chain| chain.tip_block());
+            let best_block_hash = best_block.unwrap().hash;
+
+            let umtp = mtp.unwrap().timestamp();
+            let hash = current_block.hash();
+            tracing::info!(?umtp, ?mtp_calculated, ?hash, ?best_block_hash, "mtp");
+
+        }
 
         let tip_block_height = self.update_latest_chain_channels();
 
