@@ -396,6 +396,8 @@ impl StateService {
             let _ = self.best_chain_sender.send(best_chain.cloned());
         }
 
+        tracing::info!(?tip_block, std::stringify!(update_latest_chain_channels));
+
         self.chain_tip_sender.set_best_non_finalized_tip(tip_block);
 
         tip_block_height
