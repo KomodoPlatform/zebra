@@ -174,6 +174,7 @@ impl ChainTipSender {
     pub fn set_best_non_finalized_tip(
         &mut self,
         new_tip: impl Into<Option<ChainTipBlock>> + Clone,
+        mtp: Option<DateTime<Utc>>,
     ) {
         let new_tip = new_tip.into();
         self.record_fields(&new_tip);

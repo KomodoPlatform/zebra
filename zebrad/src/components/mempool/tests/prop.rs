@@ -110,7 +110,7 @@ proptest! {
             mempool.enable(&mut recent_syncs).await;
 
             // Set the initial chain tip.
-            chain_tip_sender.set_best_non_finalized_tip(previous_chain_tip.clone());
+            chain_tip_sender.set_best_non_finalized_tip(previous_chain_tip.clone(), None);
 
             // Call the mempool so that it is aware of the initial chain tip.
             mempool.dummy_call().await;
@@ -140,7 +140,7 @@ proptest! {
                     .expect("Inserting a transaction should succeed");
 
                 // Set the new chain tip.
-                chain_tip_sender.set_best_non_finalized_tip(chain_tip.clone());
+                chain_tip_sender.set_best_non_finalized_tip(chain_tip.clone(), None);
 
                 // Call the mempool so that it is aware of the new chain tip.
                 mempool.dummy_call().await;
