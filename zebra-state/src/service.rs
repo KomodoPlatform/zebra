@@ -368,7 +368,7 @@ impl StateService {
             mtp = Some(DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(mtp_calculated, 0), Utc));
 
             let tip_block_hash = tip.hash;
-            tracing::info!(?tip_block_height, ?tip_block_hash, ?mtp_calculated, std::stringify!(update_latest_chain_channels));
+            tracing::debug!(?tip_block_height, ?tip_block_hash, ?mtp_calculated, std::stringify!(update_latest_chain_channels));
         }
 
         self.chain_tip_sender.set_best_non_finalized_tip(tip_block, mtp);
