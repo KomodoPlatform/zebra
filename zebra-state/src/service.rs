@@ -361,8 +361,8 @@ impl StateService {
             let relevant_chain = self.any_ancestor_blocks(tip.hash);
             let mut block_times: Vec<_> = relevant_chain.map(|block| {
                 block.header.time.timestamp()
-            }).take(POW_MEDIAN_BLOCK_SPAN - 1).collect();
-            block_times.push(tip.time.timestamp());
+            }).take(POW_MEDIAN_BLOCK_SPAN).collect();
+            // block_times.push(tip.time.timestamp());
             block_times.sort();
             let mtp_calculated = block_times[block_times.len() / 2];
             mtp = Some(DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(mtp_calculated, 0), Utc));
