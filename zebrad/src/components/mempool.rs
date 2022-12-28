@@ -361,6 +361,16 @@ impl Service<Request> for Mempool {
                 storage.clear_tip_rejections();
             }
 
+            // Obtain current median time past (on the best block)
+            if let Some(mtp) = self.latest_chain_tip.get_mtp_on_best_tip() {
+                let mtp_i64 = mtp.timestamp();
+                let hash_ht = self.latest_chain_tip.best_tip_height_and_hash();
+                // TODO: implement and call storage.remove_interest_not_validated_transactions (fInterestNotValidated)
+                tracing::debug!(?hash_ht, ?mtp_i64, std::stringify!(poll_ready));
+            } else {
+                panic!("mtp on best chain tip / best block should be always known in mempool");
+            }
+
             // Remove expired transactions from the mempool.
             if let Some(tip_height) = self.latest_chain_tip.best_tip_height() {
                 let expired_transactions = storage.remove_expired_transactions(tip_height);
