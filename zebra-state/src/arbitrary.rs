@@ -63,6 +63,7 @@ impl From<PreparedBlock> for ChainTipBlock {
             time: block.header.time,
             transaction_hashes,
             previous_block_hash: block.header.previous_block_hash,
+            mtp: -1,
         }
     }
 }

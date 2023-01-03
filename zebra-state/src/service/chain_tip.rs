@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDateTime};
 use tokio::sync::watch;
 use tracing::{field, instrument};
 
@@ -68,6 +68,12 @@ pub struct ChainTipBlock {
     /// If the best chain fork has changed, or some blocks have been skipped,
     /// this hash will be different to the last returned `ChainTipBlock.hash`.
     pub previous_block_hash: block::Hash,
+
+    /// The median time past value calculated on the current tip (include this tip).
+    /// As it seems we can't use Option<DateTime<Utc>> here as ChainTipBlock derive
+    /// Arbitrary trait. So, we will store mtp as i64, and negative values will mean
+    /// that mtp is not set.
+    pub mtp: i64,
 }
 
 impl From<ContextuallyValidBlock> for ChainTipBlock {
@@ -86,6 +92,7 @@ impl From<ContextuallyValidBlock> for ChainTipBlock {
             time: block.header.time,
             transaction_hashes,
             previous_block_hash: block.header.previous_block_hash,
+            mtp: -1,
         }
     }
 }
@@ -105,6 +112,7 @@ impl From<FinalizedBlock> for ChainTipBlock {
             time: block.header.time,
             transaction_hashes,
             previous_block_hash: block.header.previous_block_hash,
+            mtp: -1,
         }
     }
 }
@@ -174,8 +182,8 @@ impl ChainTipSender {
     pub fn set_best_non_finalized_tip(
         &mut self,
         new_tip: impl Into<Option<ChainTipBlock>> + Clone,
-        mtp: Option<DateTime<Utc>>,
     ) {
+
         let new_tip = new_tip.into();
         self.record_fields(&new_tip);
 
@@ -341,9 +349,14 @@ impl LatestChainTip {
     }
 
     pub fn get_mtp_on_best_tip(&self) -> Option<DateTime<Utc>> {
-        self.receiver.with_watch_data(|receiver_data| {
-            // receiver_data.mtp
-            None
+        self.receiver.with_watch_data(|chain_tip_block| {
+            chain_tip_block.as_ref().map(|ctb| {
+                if ctb.mtp < 0 {
+                    None
+                } else {
+                    Some(DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(ctb.mtp, 0), Utc))
+                }
+            }).flatten()
         })
     }
 }

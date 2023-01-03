@@ -342,7 +342,7 @@ impl StateService {
     #[instrument(level = "debug", skip(self))]
     fn update_latest_chain_channels(&mut self) -> Option<block::Height> {
         let best_chain = self.mem.best_chain();
-        let tip_block = best_chain
+        let mut tip_block = best_chain
             .and_then(|chain| chain.tip_block())
             .cloned()
             .map(ChainTipBlock::from);
@@ -354,24 +354,22 @@ impl StateService {
             let _ = self.best_chain_sender.send(best_chain.cloned());
         }
 
-        // let's calculate mtp (median time past) for the tip_block and broadcast it via channels as well
-        let mut mtp: Option<DateTime<Utc>> = None;
-
-        if let Some(tip) = tip_block.as_ref() {
+        // let's calculate mtp (median time past) for the tip_block and broadcast it inside tip_block structure
+        if let Some(tip) = tip_block.as_mut() {
             let relevant_chain = self.any_ancestor_blocks(tip.hash);
             let mut block_times: Vec<_> = relevant_chain.map(|block| {
                 block.header.time.timestamp()
             }).take(POW_MEDIAN_BLOCK_SPAN).collect();
-            // block_times.push(tip.time.timestamp());
+
             block_times.sort();
             let mtp_calculated = block_times[block_times.len() / 2];
-            mtp = Some(DateTime::<Utc>::from_utc(NaiveDateTime::from_timestamp(mtp_calculated, 0), Utc));
+            tip.mtp = mtp_calculated;
 
             let tip_block_hash = tip.hash;
             tracing::debug!(?tip_block_height, ?tip_block_hash, ?mtp_calculated, std::stringify!(update_latest_chain_channels));
         }
 
-        self.chain_tip_sender.set_best_non_finalized_tip(tip_block, mtp);
+        self.chain_tip_sender.set_best_non_finalized_tip(tip_block);
 
         tip_block_height
     }
