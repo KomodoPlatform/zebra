@@ -36,19 +36,6 @@ mod tests;
 /// and [`ChainTipChange`].
 type ChainTipData = Option<ChainTipBlock>;
 
-/// Additional (extended) data type for [`ChainTipSender`], currently it used to
-/// pass median-time-past value into mempool at once with a update best non-finalized
-/// tip.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ChainTipDataExt {
-    pub mtp: Option<DateTime<Utc>>,
-}
-impl ChainTipDataExt {
-    fn new() -> Self {
-        ChainTipDataExt { mtp: None }
-    }
-}
-
 /// A chain tip block, with precalculated block data.
 ///
 /// Used to efficiently update [`ChainTipSender`], [`LatestChainTip`],
@@ -132,7 +119,7 @@ pub struct ChainTipSender {
     use_non_finalized_tip: bool,
 
     /// The sender channel for chain tip data.
-    sender: watch::Sender<(ChainTipData, ChainTipDataExt)>,
+    sender: watch::Sender<ChainTipData>,
 }
 
 impl ChainTipSender {
@@ -146,7 +133,7 @@ impl ChainTipSender {
         let initial_tip = initial_tip.into();
         Self::record_new_tip(&initial_tip);
 
-        let (sender, receiver) = watch::channel((None, ChainTipDataExt::new()));
+        let (sender, receiver) = watch::channel(None);
 
         let mut sender = ChainTipSender {
             use_non_finalized_tip: false,
@@ -156,8 +143,7 @@ impl ChainTipSender {
         let current = LatestChainTip::new(receiver);
         let change = ChainTipChange::new(current.clone(), network);
 
-        // TODO: consider of pass real mtp here, calculated on initial_tip, instead of None
-        sender.update(initial_tip, None);
+        sender.update(initial_tip);
 
         (sender, current, change)
     }
@@ -174,8 +160,7 @@ impl ChainTipSender {
         self.record_fields(&new_tip);
 
         if !self.use_non_finalized_tip {
-            // TODO: consider to pass real mtp here instead of None
-            self.update(new_tip, None);
+            self.update(new_tip);
         }
     }
 
@@ -198,7 +183,7 @@ impl ChainTipSender {
         // but ignoring `None`s makes the tests easier
         if new_tip.is_some() {
             self.use_non_finalized_tip = true;
-            self.update(new_tip, mtp)
+            self.update(new_tip)
         }
     }
 
@@ -206,7 +191,7 @@ impl ChainTipSender {
     ///
     /// An update is only sent if the current best tip is different from the last best tip
     /// that was sent.
-    fn update(&mut self, new_tip: Option<ChainTipBlock>, mtp: Option<DateTime<Utc>>) {
+    fn update(&mut self, new_tip: Option<ChainTipBlock>) {
         // Correctness: the `self.sender.borrow()` must not be placed in a `let` binding to prevent
         // a read-lock being created and living beyond the `self.sender.send(..)` call. If that
         // happens, the `send` method will attempt to obtain a write-lock and will dead-lock.
@@ -214,7 +199,7 @@ impl ChainTipSender {
         let active_hash = self
             .sender
             .borrow()
-            .0.as_ref()
+            .as_ref()
             .map(|active_value| active_value.hash);
 
         let needs_update = match (new_tip.as_ref(), active_hash) {
@@ -226,7 +211,7 @@ impl ChainTipSender {
         };
 
         if needs_update {
-            let _ = self.sender.send((new_tip, ChainTipDataExt { mtp: mtp }));
+            let _ = self.sender.send(new_tip);
         }
     }
 
@@ -254,7 +239,7 @@ impl ChainTipSender {
         let old_tip = &*self.sender.borrow();
 
         Self::record_tip(&span, "new", new_tip);
-        Self::record_tip(&span, "old", &old_tip.0);
+        Self::record_tip(&span, "old", &old_tip);
 
         span.record(
             "old_use_non_finalized_tip",
@@ -292,12 +277,12 @@ impl ChainTipSender {
 #[derive(Clone, Debug)]
 pub struct LatestChainTip {
     /// The receiver for the current chain tip's data.
-    receiver: WatchReceiver<(ChainTipData, ChainTipDataExt)>,
+    receiver: WatchReceiver<ChainTipData>,
 }
 
 impl LatestChainTip {
     /// Create a new [`LatestChainTip`] from a watch channel receiver.
-    fn new(receiver: watch::Receiver<(ChainTipData, ChainTipDataExt)>) -> Self {
+    fn new(receiver: watch::Receiver<ChainTipData>) -> Self {
         Self {
             receiver: WatchReceiver::new(receiver),
         }
@@ -346,18 +331,19 @@ impl LatestChainTip {
             );
         };
 
-        self.receiver.with_watch_data(|chain_tip_block_data_ext| {
+        self.receiver.with_watch_data(|chain_tip_block| {
             // TODO: replace with Option::inspect when it stabilises
             //       https://github.com/rust-lang/rust/issues/91345
-            register_span_fields(chain_tip_block_data_ext.0.as_ref());
+            register_span_fields(chain_tip_block.as_ref());
 
-            chain_tip_block_data_ext.0.as_ref().map(f)
+            chain_tip_block.as_ref().map(f)
         })
     }
 
     pub fn get_mtp_on_best_tip(&self) -> Option<DateTime<Utc>> {
         self.receiver.with_watch_data(|receiver_data| {
-            receiver_data.1.mtp
+            // receiver_data.mtp
+            None
         })
     }
 }
