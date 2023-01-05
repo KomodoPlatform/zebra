@@ -363,6 +363,8 @@ impl StateService {
 
             block_times.sort();
             let mtp_calculated = block_times[block_times.len() / 2];
+
+            // advance mtp inside ChainTipBlock and then send via channel in set_best_non_finalized_tip
             tip.mtp = mtp_calculated;
 
             let tip_block_hash = tip.hash;
