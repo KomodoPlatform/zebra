@@ -2,11 +2,11 @@
 
 use std::{sync::Arc, collections::HashMap};
 use crate::{
-    fmt::SummaryDebug, transparent::{self, Script, CoinbaseData, GENESIS_COINBASE_DATA}, 
+    fmt::SummaryDebug, transparent::{self, Script, CoinbaseData, GENESIS_COINBASE_DATA, OutPoint, Input, Output, OrderedUtxo, Utxo}, 
     parameters::{Network, GENESIS_PREVIOUS_BLOCK_HASH}, 
     block::{Height, arbitrary::fix_generated_transaction, Block, merkle::Root}, 
     value_balance::ValueBalance, 
-    amount::NonNegative};
+    amount::NonNegative, transaction::{LockTime, Transaction}};
 use crate::{
     serialization::{ZcashDeserializeInto, ZcashDeserialize, ZcashSerialize}
 };
@@ -73,6 +73,7 @@ F: Fn(
         };
 
         let block = &mut vec[i].1;
+        let mut tx_1_fixed: Option<Arc<Transaction>> = None;
 
         let mut new_transactions = Vec::new();
         for (tx_index_in_block, transaction) in block.transactions.drain(..).enumerate() {
@@ -99,6 +100,7 @@ F: Fn(
                 // do nothing
             }
 
+            let mut known_utxos: Option< Vec<(OutPoint, OrderedUtxo)> > = None;
             if tx_index_in_block >= 2 {
                 // fix nota inputs and last notarised height:
                 if let Some(last) = tx.outputs().last() {
@@ -112,7 +114,23 @@ F: Fn(
                             nota.zcash_serialize(&mut new_opret).expect("nota serialization okay");
                             new_last.lock_script = Script::new(&new_opret);
                             *tx.outputs_mut().last_mut().unwrap() = new_last;
-                            //println!("fixed nota in tx output {:?} height={:?}", tx.outputs().last(), height);
+                            // println!("fixed nota in tx output {:?} height={:?} nota {:?}", tx.outputs().last(), height, nota);
+
+                            // for testnet nota add known spent utxos from the tx[1] in the same block:
+                            let tx_1 = tx_1_fixed.clone().expect("should have tx 1 stored");
+                            let tx_1_hash = tx_1.hash();
+                            let utxo_map = tx.inputs().iter().map(|input| {
+                                let new_outpoint = if let Input::PrevOut { outpoint, .. } = &*input  {
+                                    OutPoint { hash: tx_1_hash, index: outpoint.index }
+                                } else { unreachable!("invalid testnet nota: could not have coinbase input"); };
+                                // fix 
+                                let output = Output { value: tx_1.outputs()[new_outpoint.index as usize].value, lock_script: tx_1.outputs()[new_outpoint.index as usize].lock_script.clone() };
+                                let utxo = Utxo { output, height: Height(height), from_coinbase: false, lock_time: LockTime::unlocked() };
+                                let new_ordered_utxo = OrderedUtxo { utxo, tx_index_in_block: 1 };
+                                (new_outpoint, new_ordered_utxo)
+                            }).collect::< Vec<(OutPoint, OrderedUtxo)> > ();
+
+                            known_utxos = Some(utxo_map);
                         }
                     }
                 }
@@ -127,9 +145,14 @@ F: Fn(
                 &mut chain_value_pools,
                 &mut utxos,
                 check_transparent_coinbase_spend,
+                known_utxos, // nota must refer tx_1 utxos, not arbitrary selected by fix_generated_transaction if 'None' is here
             ) {
                 //println!("fixed tx_pos {} tx {:?} at height {}", tx_index_in_block, fixed_transaction.hash(), height);
-                new_transactions.push(Arc::new(fixed_transaction));
+                let tx_fixed = Arc::new(fixed_transaction);
+                if tx_index_in_block == 1 {
+                    tx_1_fixed = Some(tx_fixed.clone()); // store tx 1 whic is spent by nota in tx 2
+                }
+                new_transactions.push(tx_fixed);
             } else {
                 println!("could not fix tx {} at height {}", tx_index_in_block, height);
             }
