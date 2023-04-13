@@ -97,4 +97,9 @@ pub enum ReadResponse {
     /// [`ReadRequest::UtxosByAddresses`](crate::ReadRequest::UtxosByAddresses)
     /// with found utxos and transaction data.
     Utxos(AddressUtxos),
+
+    /// Komodo added response to [`ReadRequest::BestChainBlocks`](crate::ReadRequest::BestChainBlocks).
+    ///
+    /// with found blocks.
+    BestChainBlocks(Vec<Arc<Block>>),
 }

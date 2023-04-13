@@ -129,8 +129,8 @@ pub(crate) struct StateService {
     /// A sender channel for the current best chain tip.
     chain_tip_sender: ChainTipSender,
 
-    /// A sender channel for the current best non-finalized chain.
-    best_chain_sender: watch::Sender<Option<Arc<Chain>>>,
+    /// A sender channel for the current non-finalized state.
+    non_finalized_state_sender: watch::Sender<NonFinalizedState>,
 
     /// The set of block hashes with pending requests for their associated Block for komodo interest calc
     pending_blocks: PendingBlocks,
@@ -158,11 +158,13 @@ pub struct ReadStateService {
     /// so it might include some block data that is also in `best_mem`.
     db: ZebraDb,
 
-    /// A watch channel for the current best in-memory chain.
+    // Shared Concurrently Readable State
+    //
+    /// A watch channel with a cached copy of the [`NonFinalizedState`].
     ///
-    /// This chain is only updated between requests,
+    /// This state is only updated between requests,
     /// so it might include some block data that is also on `disk`.
-    best_chain_receiver: WatchReceiver<Option<Arc<Chain>>>,
+    non_finalized_state_receiver: WatchReceiver<NonFinalizedState>,
 
     /// The configured Zcash network.
     network: Network,
@@ -196,7 +198,10 @@ impl StateService {
 
         let mem = NonFinalizedState::new(network);
 
-        let (read_only_service, best_chain_sender) = ReadStateService::new(&disk);
+        let (non_finalized_state_sender, non_finalized_state_receiver) =
+            watch::channel(NonFinalizedState::new(disk.network()));
+
+        let read_only_service = ReadStateService::new(&disk, non_finalized_state_receiver);
 
         let queued_blocks = QueuedBlocks::default();
         let pending_utxos = PendingUtxos::default();
@@ -211,7 +216,7 @@ impl StateService {
             network,
             last_prune: Instant::now(),
             chain_tip_sender,
-            best_chain_sender,
+            non_finalized_state_sender,
         };
 
         timer.finish(module_path!(), line!(), "initializing state service");
@@ -223,7 +228,7 @@ impl StateService {
             if let Some(nu5_activation_height) = NetworkUpgrade::Nu5.activation_height(network) {
                 if check::legacy_chain(
                     nu5_activation_height,
-                    state.any_ancestor_blocks(tip.1),
+                    block_iter::any_ancestor_blocks(&state.mem, &state.disk.db(), tip.1),
                     state.network,
                 )
                 .is_err()
@@ -371,15 +376,12 @@ impl StateService {
             .map(ChainTipBlock::from);
         let tip_block_height = tip_block.as_ref().map(|block| block.height);
 
-        // The RPC service uses the ReadStateService, but it is not turned on by default.
-        if self.best_chain_sender.receiver_count() > 0 {
-            // If the final receiver was just dropped, ignore the error.
-            let _ = self.best_chain_sender.send(best_chain.cloned());
-        }
+        // If the final receiver was just dropped, ignore the error.
+        let _ = self.non_finalized_state_sender.send(self.mem.clone());
 
         // let's calculate mtp (median time past) for the tip_block and broadcast it inside tip_block structure
         if let Some(tip) = tip_block.as_mut() {
-            let relevant_chain = self.any_ancestor_blocks(tip.hash);
+            let relevant_chain = block_iter::any_ancestor_blocks(&self.mem, &self.disk.db(), tip.hash);
             /*let mut block_times: Vec<_> = relevant_chain.map(|block| {
                 block.header.time.timestamp()
             }).take(POW_MEDIAN_BLOCK_SPAN).collect();
@@ -482,32 +484,10 @@ impl StateService {
         &mut self,
         prepared: &PreparedBlock,
     ) -> Result<(), ValidateContextError> {
-        let relevant_chain = self.any_ancestor_blocks(prepared.block.header.previous_block_hash);
+        let relevant_chain = block_iter::any_ancestor_blocks(&self.mem, &self.disk.db(), prepared.block.header.previous_block_hash);
 
         // komodo_checkpoint check before other checks
-        if let Some(last_nota) = &self.mem.last_nota {
-            tracing::debug!("prepared.height={:?}, last_nota_height={:?}, last_nota_block_hash={:?}", prepared.height, last_nota.notarised_height, last_nota.notarised_block_hash);
-            // verify that the block info returned from komodo_notarizeddata matches the actual block
-            if let Some(last_nota_ht) = self.best_height_by_hash(last_nota.notarised_block_hash) {
-                if last_nota_ht == last_nota.notarised_height { // if notarized_hash not in chain, reorg
-                    if prepared.height < last_nota.notarised_height {
-                        // forked chain %d older than last notarized (height %d) vs %d" case
-                        return Err(ValidateContextError::KomodoInvalidNotarisedChain(
-                            prepared.hash,
-                            prepared.height,
-                            last_nota.notarised_height
-                        ));
-                    } else if prepared.height == last_nota.notarised_height && prepared.hash != last_nota.notarised_block_hash {
-                        // [%s] nHeight.%d == NOTARIZED_HEIGHT.%d, diff hash case
-                        return Err(ValidateContextError::KomodoInvalidNotarisedChain(
-                            prepared.hash,
-                            prepared.height,
-                            last_nota.notarised_height
-                        ));
-                    }
-                }
-            }
-        }
+        // moved to fn komodo_checkpoint()
 
         // Security: check proof of work before any other checks
         check::block_is_valid_for_recent_chain(
@@ -600,18 +580,6 @@ impl StateService {
             })
     }
 
-    /// Return an iterator over the relevant chain of the block identified by
-    /// `hash`, in order from the largest height to the genesis block.
-    ///
-    /// The block identified by `hash` is included in the chain of blocks yielded
-    /// by the iterator. `hash` can come from any chain.
-    pub fn any_ancestor_blocks(&self, hash: block::Hash) -> block_iter::Iter<'_> {
-        block_iter::Iter {
-            service: self,
-            state: block_iter::IterState::NonFinalized(hash),
-        }
-    }
-
     /// Assert some assumptions about the prepared `block` before it is validated.
     fn assert_block_can_be_validated(&self, block: &PreparedBlock) {
         // required by validate_and_commit, moved here to make testing easier
@@ -629,7 +597,8 @@ impl StateService {
 
         if let Some(tip) = self.disk.db().tip() {
             info!("komodo looking back for the last notarisation for no more than {} blocks for tip at {:?}...", MAX_LAST_NOTA_DEPTH, tip.0);
-            let mut finalised_chain = self.any_ancestor_blocks(tip.1);
+            let mut finalised_chain = block_iter::any_ancestor_blocks(&self.mem, &self.disk.db(), tip.1);
+
             let mut depth = 0;
             while depth < MAX_LAST_NOTA_DEPTH {
                 if let Some(block) = finalised_chain.next() {
@@ -669,18 +638,31 @@ impl ReadStateService {
     ///
     /// Returns the newly created service,
     /// and a watch channel for updating its best non-finalized chain.
-    pub(crate) fn new(disk: &FinalizedState) -> (Self, watch::Sender<Option<Arc<Chain>>>) {
-        let (best_chain_sender, best_chain_receiver) = watch::channel(None);
+    pub(crate) fn new(
+        disk: &FinalizedState,
+        non_finalized_state_receiver: watch::Receiver<NonFinalizedState>,
+    ) -> Self {
 
         let read_only_service = Self {
             db: disk.db().clone(),
-            best_chain_receiver: WatchReceiver::new(best_chain_receiver),
+            non_finalized_state_receiver: WatchReceiver::new(non_finalized_state_receiver),
             network: disk.network(),
         };
 
         tracing::info!("created new read-only state service");
 
-        (read_only_service, best_chain_sender)
+        read_only_service
+    }
+
+    /// Gets a clone of the latest non-finalized state from the `non_finalized_state_receiver`
+    fn latest_non_finalized_state(&self) -> NonFinalizedState {
+        self.non_finalized_state_receiver.cloned_watch_data()
+    }
+
+    /// Gets a clone of the latest, best non-finalized chain from the `non_finalized_state_receiver`
+    #[allow(dead_code)]
+    fn latest_best_chain(&self) -> Option<Arc<Chain>> {
+        self.latest_non_finalized_state().best_chain().cloned()
     }
 }
 
@@ -1062,7 +1044,7 @@ impl Service<Request> for StateService {
 
                 let fut = self.pending_blocks.queue(hash);
 
-                if let Some(block) = self.any_ancestor_blocks(hash).next() {
+                if let Some(block) = block_iter::any_ancestor_blocks(&self.mem, &self.disk.db(), hash).next() {
                     self.pending_blocks.respond(block.clone());
                 }
 
@@ -1085,10 +1067,11 @@ impl Service<Request> for StateService {
                 let network = self.network.clone();
                  
                 let relevant_chain = if let Some(block_hash) = block_hash  { 
-                    self.any_ancestor_blocks(block_hash)
+                    block_iter::any_ancestor_blocks(&self.mem, &self.disk.db(), block_hash)
                 } else  {
                     block_iter::Iter {
-                        service: self,
+                        non_finalized_state: &self.mem,
+                        db: &self.disk.db(),
                         state: block_iter::IterState::Finished, // empty relevant chain
                     }
                 };
@@ -1173,9 +1156,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let block = state.best_chain_receiver.with_watch_data(|best_chain| {
-                            read::block(best_chain, &state.db, hash_or_height)
-                        });
+                        let block = read::block(state.latest_best_chain(), &state.db, hash_or_height);
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::Block");
@@ -1209,10 +1190,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let transaction_and_height =
-                            state.best_chain_receiver.with_watch_data(|best_chain| {
-                                read::transaction(best_chain, &state.db, hash)
-                            });
+                        let transaction_and_height = read::transaction(state.latest_best_chain(), &state.db, hash);
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::Transaction");
@@ -1242,10 +1220,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let sapling_tree =
-                            state.best_chain_receiver.with_watch_data(|best_chain| {
-                                read::sapling_tree(best_chain, &state.db, hash_or_height)
-                            });
+                        let sapling_tree = read::sapling_tree(state.latest_best_chain(), &state.db, hash_or_height);
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::SaplingTree");
@@ -1275,10 +1250,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let orchard_tree =
-                            state.best_chain_receiver.with_watch_data(|best_chain| {
-                                read::orchard_tree(best_chain, &state.db, hash_or_height)
-                            });
+                        let orchard_tree = read::orchard_tree(state.latest_best_chain(), &state.db, hash_or_height);
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::OrchardTree");
@@ -1312,9 +1284,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let tx_ids = state.best_chain_receiver.with_watch_data(|best_chain| {
-                            read::transparent_tx_ids(best_chain, &state.db, addresses, height_range)
-                        });
+                        let tx_ids = read::transparent_tx_ids(state.latest_best_chain(), &state.db, addresses, height_range);
 
                         // The work is done in the future.
                         timer.finish(
@@ -1351,9 +1321,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let balance = state.best_chain_receiver.with_watch_data(|best_chain| {
-                            read::transparent_balance(best_chain, &state.db, addresses)
-                        })?;
+                        let balance = read::transparent_balance(state.latest_best_chain(), &state.db, addresses)?;
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::AddressBalance");
@@ -1384,9 +1352,7 @@ impl Service<ReadRequest> for ReadStateService {
                 let span = Span::current();
                 tokio::task::spawn_blocking(move || {
                     span.in_scope(move || {
-                        let utxos = state.best_chain_receiver.with_watch_data(|best_chain| {
-                            read::transparent_utxos(state.network, best_chain, &state.db, addresses)
-                        });
+                        let utxos = read::transparent_utxos(state.network, state.latest_best_chain(), &state.db, addresses);
 
                         // The work is done in the future.
                         timer.finish(module_path!(), line!(), "ReadRequest::UtxosByAddresses");
@@ -1395,6 +1361,44 @@ impl Service<ReadRequest> for ReadStateService {
                     })
                 })
                 .map(|join_result| join_result.expect("panic in ReadRequest::UtxosByAddresses"))
+                .boxed()
+            }
+
+            // Used by the cacl_MoM rpc
+            ReadRequest::BestChainBlocks(start_height, depth) => {
+                metrics::counter!(
+                    "state.requests",
+                    1,
+                    "service" => "read_state",
+                    "type" => "best_chain_blocks",
+                );
+
+                let timer = CodeTimer::start();
+                let state = self.clone();
+
+                let span = Span::current();
+                // # Performance
+                //
+                // Allow other async tasks to make progress while concurrently reading blocks from disk.
+                tokio::task::spawn_blocking(move || {
+                    span.in_scope(move || {
+                        let non_finalized_state = state.latest_non_finalized_state();
+                        let blocks =
+                            read::read_best_chain_blocks(&non_finalized_state, &state.db, start_height, depth);
+
+                        // The work is done in the future.
+                        timer.finish(
+                            module_path!(),
+                            line!(),
+                            "ReadRequest::BestChainBlocks",
+                        );
+
+                        Ok(ReadResponse::BestChainBlocks(blocks?))
+                    })
+                })
+                .map(|join_result| {
+                    join_result.expect("panic in ReadRequest::BestChainBlocks")
+                })
                 .boxed()
             }
         }

@@ -5,11 +5,40 @@ use std::{
     sync::Arc,
 };
 
-use zebra_chain::block::{self, Height};
+use zebra_chain::block::{self, Height, Block};
 
-use crate::service::{
-    finalized_state::ZebraDb, non_finalized_state::Chain, read::block::block_header,
-};
+use crate::{service::{
+    finalized_state::ZebraDb, non_finalized_state::{Chain, NonFinalizedState}, 
+    read::{self, block::block_header},
+    block_iter,
+}, BoxError};
+
+use super::FINALIZED_STATE_QUERY_RETRIES;
+
+/// Returns the tip of the best chain in the non-finalized or finalized state.
+pub fn best_tip(
+    non_finalized_state: &NonFinalizedState,
+    db: &ZebraDb,
+) -> Option<(block::Height, block::Hash)> {
+    tip(non_finalized_state.best_chain(), db)
+}
+
+/// Returns the tip of `chain`.
+/// If there is no chain, returns the tip of `db`.
+pub fn tip<C>(chain: Option<C>, db: &ZebraDb) -> Option<(Height, block::Hash)>
+where
+    C: AsRef<Chain>,
+{
+    // # Correctness
+    //
+    // If there is an overlap between the non-finalized and finalized states,
+    // where the finalized tip is above the non-finalized tip,
+    // Zebra is receiving a lot of blocks, or this request has been delayed for a long time,
+    // so it is acceptable to return either tip.
+    chain
+        .map(|chain| chain.as_ref().non_finalized_tip())
+        .or_else(|| db.tip())
+}
 
 /// Returns the tip of `chain`.
 /// If there is no chain, returns the tip of `db`.
@@ -343,4 +372,84 @@ where
     let intersection = find_chain_intersection(chain, db, known_blocks);
 
     collect_chain_headers(chain, db, intersection, stop, max_len)
+}
+
+/// Returns the best chain blocks
+/// `non_finalized_state` or `db`.
+///
+/// # Panics
+///
+/// - If we don't have enough blocks in the state.
+pub fn read_best_chain_blocks(
+    non_finalized_state: &NonFinalizedState,
+    db: &ZebraDb,
+    start_height: Option<block::Height>, 
+    depth: usize,
+) -> Result<Vec<Arc<Block>>, BoxError> {
+    let mut best_relevant_chain_result = komodo_best_relevant_chain(non_finalized_state, db, start_height, depth);
+
+    // Retry the finalized state query if it was interrupted by a finalizing block.
+    //
+    // TODO: refactor this into a generic retry(finalized_closure, process_and_check_closure) fn
+    for _ in 0..FINALIZED_STATE_QUERY_RETRIES {
+        if best_relevant_chain_result.is_ok() {
+            break;
+        }
+
+        best_relevant_chain_result = komodo_best_relevant_chain(non_finalized_state, db, start_height, depth);
+    }
+
+    best_relevant_chain_result
+}
+
+/// Do a consistency check by checking the finalized tip before and after all other database queries.
+/// Modified by Komodo to add start height and depth
+///
+/// Returns recent blocks in reverse height order from the start height for the passed depth.
+/// Returns an error if the tip obtained before and after is not the same.
+///
+/// # Panics
+///
+/// - If we don't have enough blocks in the state.
+fn komodo_best_relevant_chain(
+    non_finalized_state: &NonFinalizedState,
+    db: &ZebraDb,
+    start_height: Option<block::Height>, 
+    depth: usize,
+) -> Result<Vec<Arc<Block>>, BoxError> {
+
+    if depth > 1440 { return Err(BoxError::from("Depth too large")); }
+
+    let state_tip_before_queries = read::best_tip(non_finalized_state, db).ok_or_else(|| {
+        BoxError::from("Zebra's state is empty, wait until it syncs to the chain tip")
+    })?;
+
+    let start_block = if let Some(start_height) = start_height {
+        hash_by_height(non_finalized_state.best_chain(), db, start_height).ok_or_else(|| {
+            BoxError::from("Non-existent height in Zebra state")
+        })?
+    } else {
+        state_tip_before_queries.1
+    };
+
+    let best_relevant_chain =
+        block_iter::any_ancestor_blocks(non_finalized_state, db, start_block);
+    let best_relevant_chain: Vec<_> = best_relevant_chain
+        .into_iter()
+        .take(depth)
+        .collect();
+    if best_relevant_chain.len() < depth {
+        return Err(BoxError::from("Zebra's state does not contain requested number of blocks"));
+    }
+
+    let state_tip_after_queries =
+        read::best_tip(non_finalized_state, db).expect("already checked for an empty tip");
+
+    if state_tip_before_queries != state_tip_after_queries {
+        return Err("Zebra is committing too many blocks to the state, \
+                    wait until it syncs to the chain tip"
+            .into());
+    }
+
+    Ok(best_relevant_chain)
 }

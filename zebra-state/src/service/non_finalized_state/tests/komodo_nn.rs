@@ -14,7 +14,7 @@ use zebra_chain::amount::Amount;
 use crate::request::ContextuallyValidBlock;
 use crate::service::non_finalized_state::Chain;
 use crate::{Config, CommitBlockError, PreparedBlock};
-use crate::service::StateService;
+use crate::service::{StateService, block_iter};
 use crate::{ValidateContextError, FinalizedBlock};
 use crate::arbitrary::Prepare;
 
@@ -560,7 +560,7 @@ fn komodo_run_forked_nn_chain_test<C1, C2>(chain_desc: &[(&str, TCD)], check_res
         let new_chunk;
         let branch_next_tip = branch_tips.get(tcd_step.0).expect("branch id must exist");
 
-        let relevant_chain = state_service.any_ancestor_blocks(branch_next_tip.1);
+        let relevant_chain = block_iter::any_ancestor_blocks(&state_service.mem, &state_service.disk.db(), branch_next_tip.1);
         let mut prev_blocks = relevant_chain.collect::<Vec<_>>();
         prev_blocks.reverse();
 

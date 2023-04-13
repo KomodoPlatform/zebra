@@ -533,4 +533,9 @@ pub enum ReadRequest {
     ///
     /// Returns a type with found utxos and transaction information.
     UtxosByAddresses(HashSet<transparent::Address>),
+
+    /// Komodo added, gets blocks in the provided from start height for the depth.
+    ///
+    /// Returns found blocks.
+    BestChainBlocks(Option<block::Height>, usize),
 }

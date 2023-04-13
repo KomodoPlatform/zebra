@@ -16,6 +16,9 @@ use zcash_primitives::legacy::TransparentAddress;
 use ripemd::Digest as RipemdDigest;
 use sha2::{Digest as Sha2Digest, Sha256};
 
+/// Komodo mainnet coin name
+pub const KOMODO_MAINNET_COIN: &'static str = "KMD";
+
 // load NNData
 lazy_static! {
     /// static ref to parsed NN mainnet pubkeys

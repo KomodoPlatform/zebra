@@ -5,7 +5,7 @@ use std::io::Write;
 use byteorder::{LittleEndian, WriteBytesExt};
 use zcash_primitives::legacy;
 
-use crate::{block::{Height, self}, transaction, serialization::{ZcashSerialize, SerializationError, ZcashDeserialize}};
+use crate::{block::{Height, self}, transaction, serialization::{ZcashSerialize, SerializationError, ZcashDeserialize}, komodo_hardfork::KOMODO_MAINNET_COIN};
 
 /// temp minimal opcodes list for parsing nota in opreturn
 /// hope we will have the complete opcode list in dedicated script source
@@ -142,7 +142,7 @@ impl ZcashDeserialize for BackNotarisationData {
         else {
             return Err(SerializationError::Parse("could not nota symbol"));
         }
-        if nota.symbol != String::from("KMD") { return Err(SerializationError::Parse("nota symbol not KMD")); }
+        if nota.symbol != String::from(KOMODO_MAINNET_COIN) { return Err(SerializationError::Parse("nota symbol not KMD")); }
     
         trace!("komodo found nota {:?}", nota);
         Ok(nota)

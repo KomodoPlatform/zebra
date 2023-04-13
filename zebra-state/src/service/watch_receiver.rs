@@ -97,4 +97,14 @@ where
     pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
         self.receiver.changed().await
     }
+
+    /// Returns a clone of the watch data in the channel.
+    /// Cloning the watched data helps avoid deadlocks.
+    ///
+    /// Does not mark the watched data as seen.
+    ///
+    /// See `with_watch_data()` for details.
+    pub fn cloned_watch_data(&self) -> T {
+        self.receiver.borrow().clone()
+    }
 }

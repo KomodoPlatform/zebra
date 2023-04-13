@@ -471,10 +471,10 @@ impl Chain {
 
     /// Returns the non-finalized tip block hash and height.
     #[allow(dead_code)]
-    pub fn non_finalized_tip(&self) -> (block::Hash, block::Height) {
+    pub fn non_finalized_tip(&self) -> (block::Height, block::Hash) {
         (
-            self.non_finalized_tip_hash(),
             self.non_finalized_tip_height(),
+            self.non_finalized_tip_hash(),
         )
     }
 

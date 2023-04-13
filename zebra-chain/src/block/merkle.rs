@@ -5,6 +5,8 @@ use std::convert::TryInto;
 use std::iter;
 use std::{fmt, io::Write};
 
+use hex::ToHex;
+use hex::FromHex;
 #[cfg(any(any(test, feature = "proptest-impl"), feature = "proptest-impl"))]
 use proptest_derive::Arbitrary;
 
@@ -72,9 +74,58 @@ use crate::transaction::{self, Transaction};
 #[cfg_attr(any(test, feature = "proptest-impl"), derive(Arbitrary))]
 pub struct Root(pub [u8; 32]);
 
+impl Root {
+    /// Return the hash bytes in big-endian byte-order suitable for printing out byte by byte.
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    fn bytes_in_display_order(&self) -> [u8; 32] {
+        let mut reversed_bytes = self.0;
+        reversed_bytes.reverse();
+        reversed_bytes
+    }
+}
+
 impl fmt::Debug for Root {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_tuple("Root").field(&hex::encode(&self.0)).finish()
+        f.debug_tuple("Root").field(&self.encode_hex::<String>()).finish()
+    }
+}
+
+impl ToHex for &Root {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+impl ToHex for Root {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+impl FromHex for Root {
+    type Error = <[u8; 32] as FromHex>::Error;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let mut root = <[u8; 32]>::from_hex(hex)?;
+        root.reverse();
+
+        Ok(root.into())
+    }
+}
+
+impl From<[u8; 32]> for Root {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
     }
 }
 
@@ -120,6 +171,27 @@ impl std::iter::FromIterator<transaction::Hash> for Root {
     fn from_iter<I>(hashes: I) -> Self
     where
         I: IntoIterator<Item = transaction::Hash>,
+    {
+        let mut hashes = hashes.into_iter().map(|hash| hash.0).collect::<Vec<_>>();
+        while hashes.len() > 1 {
+            hashes = hashes
+                .chunks(2)
+                .map(|chunk| match chunk {
+                    [h1, h2] => hash(h1, h2),
+                    [h1] => hash(h1, h1),
+                    _ => unreachable!("chunks(2)"),
+                })
+                .collect();
+        }
+        Self(hashes[0])
+    }
+}
+
+/// Added by Komodo to calc MoM
+impl std::iter::FromIterator<Root> for Root {
+    fn from_iter<I>(hashes: I) -> Self
+    where
+        I: IntoIterator<Item = Root>,
     {
         let mut hashes = hashes.into_iter().map(|hash| hash.0).collect::<Vec<_>>();
         while hashes.len() > 1 {
