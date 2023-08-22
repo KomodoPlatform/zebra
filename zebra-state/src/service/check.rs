@@ -105,13 +105,15 @@ where
         difficulty_adjustment,
     )?;
 
+    let difficulty_threshold_exp = prepared.block.header.difficulty_threshold.to_expanded().ok_or(ValidateContextError::KomodoSpecialBlockInvalidDifficulty(prepared.height, prepared.hash))?;
+    let hash = prepared.block.hash();
+
     // check komodo contextual rules for special notary blocks:
-    if komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter())? {  // returns error if special block invalid
+    if hash > difficulty_threshold_exp && komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter())? {  // returns error if special block invalid
         use zebra_chain::work::difficulty::ExpandedDifficulty;
         tracing::debug!("block ht={:?} is a komodo special block", prepared.height);
 
         // check min difficulty for a special block:
-        let difficulty_threshold_exp = prepared.block.header.difficulty_threshold.to_expanded().ok_or(ValidateContextError::KomodoSpecialBlockInvalidDifficulty(prepared.height, prepared.hash))?;
         if difficulty_threshold_exp > ExpandedDifficulty::target_difficulty_limit(network) {
             return Err(ValidateContextError::KomodoSpecialBlockTargetDifficultyLimit(
                 prepared.height,
