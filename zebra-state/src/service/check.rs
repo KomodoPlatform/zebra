@@ -114,7 +114,7 @@ where
         tracing::debug!("block ht={:?} is a komodo special block", prepared.height);
 
         // check min difficulty for a special block:
-        if difficulty_threshold_exp > ExpandedDifficulty::target_difficulty_limit(network) {
+        if hash > ExpandedDifficulty::target_difficulty_limit(network) {
             return Err(ValidateContextError::KomodoSpecialBlockTargetDifficultyLimit(
                 prepared.height,
                 prepared.hash,
