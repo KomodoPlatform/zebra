@@ -106,45 +106,16 @@ pub fn difficulty_is_valid(
     //
     // The difficulty filter is also context-free.
     if hash > &difficulty_threshold {
-        /* pow (non easy-diff) blocks with incorrect diff, considered as exceptions */
-        if height >= &Height(205641) && height <= &Height(791989) {     // TODO: add mainnet check
+
+        /* https://github.com/KomodoPlatform/komodo/blob/156dba60184c07d0781a57d5b5005b8f3dba0c98/src/pow.cpp#L757 */
+        if network == Network::Mainnet && height <= &Height(792_000) {
             return Ok(());
         }
 
-        /* check if it's valid easy-diff NN mining */
-        /* 
-        let cb_tx = block.transactions.get(0);
-        if cb_tx.is_some() {
-            if cb_tx.unwrap().outputs().len() > 0 {
-                let lock_script_raw = &cb_tx.unwrap().outputs()[0].lock_script.as_raw_bytes();
-                /*if lock_script_raw.len() == 35 && lock_script_raw[0] == 0x21 && lock_script_raw[34] == 0xac {
-                    let pk = &lock_script_raw[1..34];
-                    if let Ok(pk) = PublicKey::from_slice(pk) {
-                        if is_notary_node(height, &pk) {
-                            return Ok(());
-                        }
-                    }
-                }*/
-                if komodo_is_notary_node_output(height, &cb_tx.unwrap().outputs()[0]) {
-                    return Ok(());
-                }
-            }
-        }
-        */
-
-        if network == Network::Mainnet && height < &Height(250000) {
-            return Ok(())   // skip diff check for mainnet while hardcoded notaries. TODO: fix diff check for hardcoded notaries
-        }
-
-        
-        if height == &Height(0)  {  
-            return Ok(());   // skip genesis, TODO: fix genesis diff for testnet
-        }
-
-        // check if this is a notary block
+        // possible easy-diff (notary-mined) block, but a thorough check will be conducted during contextual validation.
         if let Some(pk) = komodo_get_block_pubkey(block) {
             if NN::komodo_is_notary_pubkey(network, &height, &pk) {
-                return Ok(()); // skip the next difficulty check rule  
+                return Ok(());
             }
         }
 
