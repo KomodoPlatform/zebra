@@ -120,8 +120,6 @@ where
         prepared.block.header.difficulty_threshold.to_expanded().ok_or(ValidateContextError::KomodoSpecialBlockInvalidDifficulty(prepared.height, prepared.hash))?
     };
 
-    assert!(!prepared.hash.0.iter().all(|&x| x == 0), "hash must not be all zeroes"); // TODO: check for debug purposes, if hash in prepared initialised correctly
-
     // check proof of work matches claimed amount
     if prepared.hash > bn_target {
         /* https://github.com/KomodoPlatform/komodo/blob/156dba60184c07d0781a57d5b5005b8f3dba0c98/src/pow.cpp#L757 */

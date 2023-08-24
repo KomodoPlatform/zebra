@@ -109,6 +109,7 @@ fn is_second_block_allowed(notary_id: NotaryId, blocktime: DateTime<Utc>, thresh
     if v_priority_list.len() != 64 {
         return Err(NotaryValidateContextError::NotaryInternalError(String::from("invalid priority list")));
     }
+
     if blocktime >= threshold && delta > 0   {
         if let Ok(pos) = usize::try_from((blocktime - threshold).num_seconds() / delta as i64) {
             if pos < v_priority_list.len()  {
@@ -150,7 +151,6 @@ fn komodo_check_if_second_block_allowed<C>(network: Network, notary_id: NotaryId
         tracing::info!("komodo notary hf22 second block allowed for ht={:?}", height);
         return Ok(());
     }
-    error!("komodo invalid second block generated for notary_id={} block.header={:?}", notary_id, block.header);
     Err(NotaryValidateContextError::NotaryBlockInvalid(*height, block.hash(), String::from("invalid second block after gap")))
 }
 
