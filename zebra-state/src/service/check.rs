@@ -106,7 +106,12 @@ where
         difficulty_adjustment,
     )?;
 
-    let bn_target = if komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter())? // returns error if special block invalid
+    let f_is_special_notary_block = match komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter()) {
+        Ok(f_is_special) => f_is_special,
+        Err(_) => false, // returns error if special block invalid, i.e. it should be validate as regular block
+    };
+
+    let bn_target = if f_is_special_notary_block
     {
         tracing::debug!("block ht={:?} is a komodo special block", prepared.height);
         ExpandedDifficulty::target_difficulty_limit(network)
