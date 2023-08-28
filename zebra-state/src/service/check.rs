@@ -5,11 +5,11 @@ use std::{borrow::Borrow, sync::Arc, time::SystemTime};
 use chrono::{Duration, DateTime, Utc};
 
 use zebra_chain::{
-    block::{self, Block, ChainHistoryBlockTxAuthCommitmentHash, CommitmentError},
+    block::{self, Block, ChainHistoryBlockTxAuthCommitmentHash, CommitmentError, Height},
     history_tree::HistoryTree,
     parameters::POW_AVERAGING_WINDOW,
     parameters::{Network, NetworkUpgrade},
-    work::difficulty::CompactDifficulty, transparent, amount::{Amount, NonNegative}, transaction::{LockTime, Transaction}, interest::KOMODO_MAXMEMPOOLTIME,
+    work::difficulty::{CompactDifficulty, ExpandedDifficulty}, transparent, amount::{Amount, NonNegative}, transaction::{LockTime, Transaction}, interest::KOMODO_MAXMEMPOOLTIME,
 };
 
 use crate::{constants, BoxError, PreparedBlock, ValidateContextError};
@@ -100,31 +100,35 @@ where
     
     let difficulty_adjustment =
         AdjustedDifficulty::new_from_block(&prepared.block, network, relevant_data);
+
     check::difficulty_threshold_is_valid(
         prepared.block.header.difficulty_threshold,
         difficulty_adjustment,
     )?;
 
-    // check komodo contextual rules for special notary blocks:
-    if komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter())? {  // returns error if special block invalid
-        use zebra_chain::work::difficulty::ExpandedDifficulty;
-        tracing::debug!("block ht={:?} is a komodo special block", prepared.height);
-
-        // check min difficulty for a special block:
-        let difficulty_threshold_exp = prepared.block.header.difficulty_threshold.to_expanded().ok_or(ValidateContextError::KomodoSpecialBlockInvalidDifficulty(prepared.height, prepared.hash))?;
-        if difficulty_threshold_exp > ExpandedDifficulty::target_difficulty_limit(network) {
-            return Err(ValidateContextError::KomodoSpecialBlockTargetDifficultyLimit(
-                prepared.height,
-                prepared.hash,
-                difficulty_threshold_exp,
-                network,
-                ExpandedDifficulty::target_difficulty_limit(network),
-            ))?;
+    let f_is_special_notary_block = match komodo_is_special_notary_block(&prepared.block, &prepared.height, network, relevant_chain.into_iter()) {
+        Ok(f_is_special) => f_is_special,
+        Err(e) => { // returns error if special block invalid, i.e. it should be validate as regular block
+            tracing::debug!("block ht={:?}, komodo_is_special_notary_block error: ", e.to_string());
+            false
         }
-    }
-    else {
-        // ordinary block, nothing to check, all checks must have completed 
+    };
+
+    let bn_target = if f_is_special_notary_block
+    {
+        tracing::debug!("block ht={:?} is a komodo special block", prepared.height);
+        ExpandedDifficulty::target_difficulty_limit(network)
+    } else {
         tracing::debug!("block ht={:?} is an ordinary komodo block", prepared.height);
+        prepared.block.header.difficulty_threshold.to_expanded().ok_or(ValidateContextError::KomodoSpecialBlockInvalidDifficulty(prepared.height, prepared.hash))?
+    };
+
+    // check proof of work matches claimed amount
+    if prepared.hash > bn_target {
+        /* https://github.com/KomodoPlatform/komodo/blob/156dba60184c07d0781a57d5b5005b8f3dba0c98/src/pow.cpp#L757 */
+        if network == Network::Mainnet && prepared.height > Height(792_000) {
+            return Err(ValidateContextError::DifficultyFilter(prepared.height, prepared.hash, bn_target, network));
+        }
     }
 
     Ok(())
