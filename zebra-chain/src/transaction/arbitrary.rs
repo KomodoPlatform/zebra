@@ -283,6 +283,7 @@ impl Transaction {
     //
     // TODO: take some extra arbitrary flags, which select between zero and non-zero
     //       remaining value in each chain value pool
+    // Komodo: we need height and last_block_time to calc transaction value input pool (with komodo interest)
     pub fn fix_chain_value_pools(
         &mut self,
         network: Network,
@@ -345,8 +346,11 @@ impl Transaction {
             .expect("chain value pool and remaining transaction value fixes produce valid transaction value balances")
             .neg();
 
+        /* we do not need to add accrued interest to the value pool
+           as we calculate tx value balance without accrued interest in the tx inputs 
+           (the chain value pool does not contain the currently accrued interest for the current moment)
         // add tx interest to chain value pool 
-        let interest = self.komodo_interest_tx(network, utxos, height, last_block_time).constrain::<NegativeAllowed>()
+        let interest = self.komodo_interest_tx(network, utxos, Some(height), last_block_time).constrain::<NegativeAllowed>()
             .expect("conversion from NonNegative to NegativeAllowed is always valid");
         
         let interest_chain_value_pool_change = ValueBalance::from_transparent_amount(interest);
@@ -365,6 +369,7 @@ impl Transaction {
                     remaining_transaction_value,
                 )
             });
+        */
 
 
         let chain_value_pools = chain_value_pools
@@ -471,6 +476,7 @@ impl Transaction {
             return Ok(Amount::zero());
         }
 
+        // we should add komodo interest to tx transparent inputs
         let outputs = &outputs_from_utxos(utxos.clone());
         let mut remaining_input_value = //self.input_value_pool(outputs)?;
             (self.input_value_pool(outputs)? + self.komodo_interest_tx(network, utxos, block_height, last_block_time))

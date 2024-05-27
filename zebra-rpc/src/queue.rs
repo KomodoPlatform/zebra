@@ -8,12 +8,12 @@
 //! We use this data type because we want the transactions in the queue to be in order.
 //! The [`Runner`] component will do the processing in it's [`Runner::run()`] method.
 
-use std::{collections::HashSet};
+use std::{collections::HashSet, sync::Arc};
 
 use chrono::Duration;
 use indexmap::IndexMap;
 use tokio::{
-    sync::broadcast::{channel, Receiver, Sender},
+    sync::broadcast::{self, error::TryRecvError},
     time::Instant,
 };
 
@@ -23,14 +23,14 @@ use zebra_chain::{
     block::Height,
     chain_tip::ChainTip,
     parameters::{Network, NetworkUpgrade},
-    transaction::{UnminedTxId, UnminedTxWithMempoolParams},
+    transaction::{Transaction, UnminedTx, UnminedTxId, UnminedTxWithMempoolParams},
 };
 use zebra_node_services::{
     mempool::{Gossip, Request, Response},
     BoxError,
 };
 
-use zebra_state::{ReadRequest, ReadResponse};
+use zebra_state::{MinedTx, ReadRequest, ReadResponse};
 
 #[cfg(test)]
 mod tests;
@@ -55,24 +55,26 @@ pub struct Queue {
 /// The runner will make the processing of the transactions in the queue.
 pub struct Runner {
     queue: Queue,
-    sender: Sender<Option<UnminedTxWithMempoolParams>>,
+    receiver: broadcast::Receiver<UnminedTxWithMempoolParams>,
     tip_height: Height,
 }
 
 impl Queue {
     /// Start a new queue
-    pub fn start() -> Runner {
-        let (sender, _receiver) = channel(CHANNEL_AND_QUEUE_CAPACITY);
+    pub fn start() -> (Runner, broadcast::Sender<UnminedTxWithMempoolParams>) {
+        let (sender, receiver) = broadcast::channel(CHANNEL_AND_QUEUE_CAPACITY);
 
         let queue = Queue {
             transactions: IndexMap::new(),
         };
 
-        Runner {
+        let runner = Runner {
             queue,
-            sender,
+            receiver,
             tip_height: Height(0),
-        }
+        };
+
+        (runner, sender)
     }
 
     /// Get the transactions in the queue.
@@ -103,16 +105,6 @@ impl Queue {
 }
 
 impl Runner {
-    /// Create a new sender for this runner.
-    pub fn sender(&self) -> Sender<Option<UnminedTxWithMempoolParams>> {
-        self.sender.clone()
-    }
-
-    /// Create a new receiver.
-    pub fn receiver(&self) -> Receiver<Option<UnminedTxWithMempoolParams>> {
-        self.sender.subscribe()
-    }
-
     /// Get the queue transactions as a `HashSet` of unmined ids.
     fn transactions_as_hash_set(&self) -> HashSet<UnminedTxId> {
         let transactions = self.queue.transactions();
@@ -157,8 +149,6 @@ impl Runner {
             + 'static,
         Tip: ChainTip + Clone + Send + Sync + 'static,
     {
-        let mut receiver = self.sender.subscribe();
-
         loop {
             // if we don't have a chain use `NO_CHAIN_TIP_HEIGHT` to get block spacing
             let tip_height = match tip.best_tip_height() {
@@ -173,8 +163,23 @@ impl Runner {
             tokio::time::sleep(spacing.to_std().expect("should never be less than zero")).await;
 
             // get transactions from the channel
-            while let Ok(Some(tx)) = receiver.try_recv() {
-                let _ = &self.queue.insert(tx.clone());
+            loop {
+                let tx = match self.receiver.try_recv() {
+                    Ok(tx) => tx,
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Lagged(skipped_count)) => {
+                        tracing::info!("sendrawtransaction queue was full: skipped {skipped_count} transactions");
+                        continue;
+                    }
+                    Err(TryRecvError::Closed) => {
+                        tracing::info!(
+                            "sendrawtransaction queue was closed: is Zebra shutting down?"
+                        );
+                        return;
+                    }
+                };
+
+                self.queue.insert(tx.clone());
             }
 
             // skip some work if stored tip height is the same as the one arriving
@@ -286,8 +291,8 @@ impl Runner {
 
             // ignore any error coming from the state
             let state_response = state.clone().oneshot(request).await;
-            if let Ok(ReadResponse::Transaction(Some(tx))) = state_response {
-                response.insert(tx.0.unmined_id());
+            if let Ok(ReadResponse::Transaction(Some(MinedTx { tx, .. }))) = state_response {
+                response.insert(tx.unmined_id());
             }
         }
 

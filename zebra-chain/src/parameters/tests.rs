@@ -10,7 +10,7 @@ use Network::*;
 use NetworkUpgrade::*;
 
 /// Check that the activation heights and network upgrades are unique.
-#[ignore]  // fix for Komodo
+#[ignore = "fix for komodo upgrades"]  // fix for Komodo
 #[test]
 fn activation_bijective() {
     zebra_test::init();
@@ -119,14 +119,14 @@ fn komodo_activation_extremes(network: Network) {
     assert_eq!(NetworkUpgrade::next(network, block::Height::MAX), None);
 }
 
-#[ignore]  // fix for Komodo
+#[ignore = "fix for komodo upgrades"]  // fix for Komodo
 #[test]
 fn activation_consistent_mainnet() {
     zebra_test::init();
     activation_consistent(Mainnet)
 }
 
-#[ignore]  // fix for Komodo
+#[ignore = "fix for komodo upgrades"]  // fix for Komodo
 #[test]
 fn activation_consistent_testnet() {
     zebra_test::init();
@@ -219,14 +219,14 @@ fn branch_id_extremes(network: Network) {
     );
 }
 
-#[ignore] // TODO: fix for komodo where Overwinter Blossom etc do not have activation height
+#[ignore = "fix for komodo upgrades"] // TODO: fix for komodo where Overwinter Blossom etc do not have activation height
 #[test]
 fn branch_id_consistent_mainnet() {
     zebra_test::init();
     branch_id_consistent(Mainnet)
 }
 
-#[ignore] // TODO: fix for komodo where Overwinter Blossom etc do not have activation height
+#[ignore = "fix for komodo upgrades"] // TODO: fix for komodo where Overwinter Blossom etc do not have activation height
 #[test]
 fn branch_id_consistent_testnet() {
     zebra_test::init();

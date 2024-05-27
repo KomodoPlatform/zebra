@@ -35,7 +35,7 @@ use zebra_state as zs;
 
 use crate::{
     block::BlockVerifier,
-    block::VerifyBlockError,
+    block::{VerifyBlockError, Request},
     checkpoint::{CheckpointList, CheckpointVerifier, VerifyCheckpointError},
     error::TransactionError,
     transaction, BoxError, Config,
@@ -91,15 +91,46 @@ where
 }
 
 /// An error while semantically verifying a block.
+//
+// One or both of these error variants are at least 140 bytes
 #[derive(Debug, Display, Error)]
+#[allow(missing_docs)]
 pub enum VerifyChainError {
-    /// block could not be checkpointed
-    Checkpoint(#[source] VerifyCheckpointError),
-    /// block could not be verified
-    Block(#[source] VerifyBlockError),
+    /// Block could not be checkpointed
+    Checkpoint { source: Box<VerifyCheckpointError> },
+    /// Block could not be full-verified
+    Block { source: Box<VerifyBlockError> },
 }
 
-impl<S, V> Service<Arc<Block>> for ChainVerifier<S, V>
+impl From<VerifyCheckpointError> for VerifyChainError {
+    fn from(err: VerifyCheckpointError) -> Self {
+        VerifyChainError::Checkpoint {
+            source: Box::new(err),
+        }
+    }
+}
+
+impl From<VerifyBlockError> for VerifyChainError {
+    fn from(err: VerifyBlockError) -> Self {
+        VerifyChainError::Block {
+            source: Box::new(err),
+        }
+    }
+}
+
+impl VerifyChainError {
+    /// Returns `true` if this is definitely a duplicate request.
+    /// Some duplicate requests might not be detected, and therefore return `false`.
+    pub fn is_duplicate_request(&self) -> bool {
+        match self {
+            VerifyChainError::Checkpoint { source, .. } => source.is_duplicate_request(),
+            VerifyChainError::Block { source, .. } => source.is_duplicate_request(),
+        }
+    }
+}
+
+
+impl<S, V> Service<Request> for ChainVerifier<S, V>
 where
     S: Service<zs::Request, Response = zs::Response, Error = BoxError> + Send + Clone + 'static,
     S::Future: Send + 'static,
@@ -132,28 +163,34 @@ where
         // The chain verifier holds one slot in each verifier, for each concurrent task.
         // Therefore, any shared buffers or batches polled by these verifiers should double
         // their bounds. (For example, the state service buffer.)
-        ready!(self
-            .checkpoint
-            .poll_ready(cx)
-            .map_err(VerifyChainError::Checkpoint))?;
-        ready!(self.block.poll_ready(cx).map_err(VerifyChainError::Block))?;
+        ready!(self.checkpoint.poll_ready(cx))?;
+        ready!(self.block.poll_ready(cx))?;
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, block: Arc<Block>) -> Self::Future {
+    fn call(&mut self, request: Request) -> Self::Future {
+        let block = request.block();
+
         match block.coinbase_height() {
-            Some(height) if height <= self.max_checkpoint_height => self
-                .checkpoint
-                .call(block)
-                .map_err(VerifyChainError::Checkpoint)
-                .boxed(),
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            // There's currently no known use case for block proposals below the checkpoint height,
+            // so it's okay to immediately return an error here.
+            Some(height) if height <= self.max_checkpoint_height && request.is_proposal() => {
+                async {
+                    // TODO: Add a `ValidateProposalError` enum with a `BelowCheckpoint` variant?
+                    Err(VerifyBlockError::ValidateProposal(
+                        "block proposals must be above checkpoint height".into(),
+                    ))?
+                }
+                .boxed()
+            }
+
+            Some(height) if height <= self.max_checkpoint_height => {
+                self.checkpoint.call(block).map_err(Into::into).boxed()
+            }
             // This also covers blocks with no height, which the block verifier
             // will reject immediately.
-            _ => self
-                .block
-                .call(block)
-                .map_err(VerifyChainError::Block)
-                .boxed(),
+            _ => self.block.call(request).map_err(Into::into).boxed(),
         }
     }
 }
@@ -198,7 +235,7 @@ pub async fn init<S>(
     mut state_service: S,
     debug_skip_parameter_preload: bool,
 ) -> (
-    Buffer<BoxService<Arc<Block>, block::Hash, VerifyChainError>, Arc<Block>>,
+    Buffer<BoxService<Request, block::Hash, VerifyChainError>, Request>,
     Buffer<
         BoxService<transaction::Request, transaction::Response, TransactionError>,
         transaction::Request,
@@ -274,4 +311,21 @@ where
         groth16_download_handle,
         max_checkpoint_height,
     )
+}
+
+/// Parses the checkpoint list for `network` and `config`.
+/// Returns the checkpoint list and maximum checkpoint height.
+pub fn init_checkpoint_list(config: Config, network: Network) -> (CheckpointList, Height) {
+    // TODO: Zebra parses the checkpoint list three times at startup.
+    //       Instead, cache the checkpoint list for each `network`.
+    let list = CheckpointList::new(network);
+
+    let max_checkpoint_height = if config.checkpoint_sync {
+        list.max_height()
+    } else {
+        list.min_height_in_range(network.mandatory_checkpoint_height()..)
+            .expect("hardcoded checkpoint list extends past canopy activation")
+    };
+
+    (list, max_checkpoint_height)
 }

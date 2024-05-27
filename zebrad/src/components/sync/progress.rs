@@ -6,7 +6,7 @@ use chrono::Utc;
 use num_integer::div_ceil;
 
 use zebra_chain::{
-    block::Height,
+    block::{Height, HeightDiff},
     chain_tip::ChainTip,
     fmt::humantime_seconds,
     parameters::{Network, NetworkUpgrade, POST_BLOSSOM_POW_TARGET_SPACING},
@@ -21,14 +21,14 @@ const LOG_INTERVAL: Duration = Duration::from_secs(60);
 /// The number of blocks we consider to be close to the tip.
 ///
 /// Most chain forks are 1-7 blocks long.
-const MAX_CLOSE_TO_TIP_BLOCKS: i32 = 1;
+const MAX_CLOSE_TO_TIP_BLOCKS: HeightDiff = 1;
 
 /// Skip slow sync warnings when we are this close to the tip.
 ///
 /// In testing, we've seen warnings around 30 blocks.
 ///
 /// TODO: replace with `MAX_CLOSE_TO_TIP_BLOCKS` after fixing slow syncing near tip (#3375)
-const MIN_SYNC_WARNING_BLOCKS: i32 = 60;
+const MIN_SYNC_WARNING_BLOCKS: HeightDiff = 60;
 
 /// The number of fractional digits in sync percentages.
 const SYNC_PERCENT_FRAC_DIGITS: usize = 3;
@@ -47,7 +47,7 @@ const SYNC_PERCENT_FRAC_DIGITS: usize = 3;
 ///
 /// We might add tests that sync from a cached tip state,
 /// so we only allow a few extra blocks here.
-const MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE: i32 = 10;
+const MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE: u32 = 10;
 
 /// Logs Zebra's estimated progress towards the chain tip every minute or so.
 ///
@@ -63,16 +63,14 @@ pub async fn show_block_chain_progress(
     // - the non-finalized state limit, and
     // - the minimum number of extra blocks mined between a checkpoint update,
     //   and the automated tests for that update.
-    let min_after_checkpoint_blocks = i32::try_from(zebra_state::MAX_BLOCK_REORG_HEIGHT)
-        .expect("constant fits in i32")
-        + MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE;
+    let min_after_checkpoint_blocks = zebra_state::MAX_BLOCK_REORG_HEIGHT + MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE;
 
     // The minimum height of the valid best chain, based on:
     // - the hard-coded checkpoint height,
     // - the minimum number of blocks after the highest checkpoint.
     let after_checkpoint_height = CheckpointList::new(network)
         .max_height()
-        .add(min_after_checkpoint_blocks)
+        .add(min_after_checkpoint_blocks.into())
         .expect("hard-coded checkpoint height is far below Height::MAX");
 
     let target_block_spacing = NetworkUpgrade::target_spacing_for_height(network, Height::MAX);
@@ -178,9 +176,8 @@ pub async fn show_block_chain_progress(
             } else if is_syncer_stopped && current_height <= after_checkpoint_height {
                 // We've stopped syncing blocks,
                 // but we're below the minimum height estimated from our checkpoints.
-                let min_minutes_after_checkpoint_update: i64 = div_ceil(
-                    i64::from(MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE)
-                        * POST_BLOSSOM_POW_TARGET_SPACING,
+                let min_minutes_after_checkpoint_update = div_ceil(
+                    MIN_BLOCKS_MINED_AFTER_CHECKPOINT_UPDATE * POST_BLOSSOM_POW_TARGET_SPACING,
                     60,
                 );
 

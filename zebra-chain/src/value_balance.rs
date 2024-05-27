@@ -214,6 +214,13 @@ impl ValueBalance<NonNegative> {
     /// > the full value of the included UTXOs must be spent or given to a miner as a transaction fee.
     ///
     /// <https://developer.bitcoin.org/devguide/transactions.html#transaction-fees-and-change>
+    /// 
+    /// Note for Komodo:
+    /// it looks like we do not have the same value pool for transparent utxos. 
+    /// This pool evaluates a rule which valudates the total chain unspent value against the Money Range, 
+    /// Apparently we should disable this rule at all.
+    /// Link to this rule in our docs:
+    /// https://github.com/dimxy/komodo/wiki/Komodo-Consensus-Specification-Draft#kmd-zebra-0004-total-chain-transparent-unspent-value-within-money-range 
     pub fn add_block(
         self,
         network: Network,
@@ -221,6 +228,7 @@ impl ValueBalance<NonNegative> {
         utxos: &HashMap<transparent::OutPoint, transparent::Utxo>,
         last_block_time: Option<DateTime<Utc>>, // previous block time to calc komodo interest
     ) -> Result<ValueBalance<NonNegative>, ValueBalanceError> {
+        
         let chain_value_pool_change = block.borrow().chain_value_pool_change(network, utxos, block.borrow().coinbase_height().unwrap(), last_block_time)?;
 
         // This will error if the chain value pool balance gets negative with the change.
@@ -262,14 +270,18 @@ impl ValueBalance<NonNegative> {
     ) -> Result<ValueBalance<NonNegative>, ValueBalanceError> {
         use std::ops::Neg;
 
+        let interest = transaction.borrow().komodo_interest_tx(network, utxos, height, last_block_time).constrain::<NegativeAllowed>()
+            .expect("conversion from NonNegative to NegativeAllowed is always valid");
+
         // the chain pool (unspent outputs) has the opposite sign to
         // transaction value balances (inputs - outputs)
         let chain_value_pool_change = transaction
             .borrow()
-            .value_balance_from_outputs(network, utxos, height, last_block_time)?
+            .value_balance_from_outputs(network, utxos, height, last_block_time)?  
             .neg();
 
-        self.add_chain_value_pool_change(chain_value_pool_change)
+        let chain_value_pool_change_no_interest = (chain_value_pool_change - ValueBalance::from_transparent_amount(interest))?;
+        self.add_chain_value_pool_change(chain_value_pool_change_no_interest) // substract komodo interest from the pool change value (as pool does not have it)
     }
 
     /// Returns the sum of this value balance, and the chain value pool change in `input`.
@@ -301,11 +313,13 @@ impl ValueBalance<NonNegative> {
 
         // the chain pool (unspent outputs) has the opposite sign to
         // transaction value balances (inputs - outputs)
+        // Note: do not substract komodo interest from the chain value pool 
         let transparent_value_pool_change = input.borrow().value_from_outputs(outputs).neg();
-
         let transparent_value_pool_change =
-            ValueBalance::from_transparent_amount( (interest + transparent_value_pool_change).expect("valid amount for value_pool_change with interest") );
- 
+            ValueBalance::from_transparent_amount( (transparent_value_pool_change - interest).expect("valid amount for value_pool_change with interest") );
+        //let transparent_value_pool_change =
+        //    ValueBalance::from_transparent_amount(transparent_value_pool_change); // Note: no komodo interest here
+
         self.add_chain_value_pool_change(transparent_value_pool_change)
     }
 

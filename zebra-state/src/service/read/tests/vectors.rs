@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use zebra_chain::{
-    block::Block, parameters::Network::*, serialization::ZcashDeserializeInto, transaction,
+    block::{Block, Height}, parameters::Network::*, serialization::ZcashDeserializeInto, transaction,
 };
 
 use zebra_test::{
@@ -11,7 +11,7 @@ use zebra_test::{
     transcript::{ExpectedTranscriptError, Transcript},
 };
 
-use crate::{init_test_services, populated_state, ReadRequest, ReadResponse};
+use crate::{init_test_services, populated_state, ReadRequest, ReadResponse, MinedTx};
 
 /// Test that ReadStateService responds correctly when empty.
 #[tokio::test]
@@ -42,6 +42,8 @@ async fn populated_read_state_responds_correctly() -> Result<()> {
     let (_state, read_state, _latest_chain_tip, _chain_tip_change) =
         populated_state(blocks.clone(), Mainnet).await;
 
+    let tip_height = Height(blocks.len() as u32 - 1);
+
     let empty_cases = Transcript::from(empty_state_test_cases());
     empty_cases.check(read_state.clone()).await?;
 
@@ -68,10 +70,11 @@ async fn populated_read_state_responds_correctly() -> Result<()> {
         for transaction in &block.transactions {
             let transaction_cases = vec![(
                 ReadRequest::Transaction(transaction.hash()),
-                Ok(ReadResponse::Transaction(Some((
-                    transaction.clone(),
-                    block.coinbase_height().unwrap(),
-                )))),
+                Ok(ReadResponse::Transaction(Some(MinedTx {
+                    tx: transaction.clone(),
+                    height: block.coinbase_height().unwrap(),
+                    confirmations: 1 + tip_height.0 - block.coinbase_height().unwrap().0,
+                }))),
             )];
 
             let transaction_cases = Transcript::from(transaction_cases);

@@ -218,7 +218,7 @@ fn mempool_expired_basic_for_network(network: Network) -> Result<()> {
     let tx_id = tx.unmined_id();
 
     // Insert the transaction into the mempool, with a fake zero miner fee
-    storage.insert(VerifiedUnminedTx::new(tx.into(), Amount::zero(), Amount::zero()))?;
+    storage.insert(VerifiedUnminedTx::new(tx.into(), Amount::zero(), Amount::zero(), 0))?;
 
     assert_eq!(storage.transaction_count(), 1);
 

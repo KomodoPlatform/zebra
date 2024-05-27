@@ -10,7 +10,7 @@ use tokio::{
 use tracing::Span;
 
 use crate::{
-    address_book::AddressMetrics, meta_addr::MetaAddrChange, AddressBook, BoxError, Config, address_book::InboundConns,
+    address_book::AddressMetrics, meta_addr::MetaAddrChange, AddressBook, BoxError, Config, komodo_peer_stat::PeerStats,
 };
 
 /// The `AddressBookUpdater` hooks into incoming message streams for each peer
@@ -30,7 +30,7 @@ impl AddressBookUpdater {
     ///
     /// Returns handles for:
     /// - the address book,
-    /// - the inbound connection list (added by komodo team)
+    /// - the peer stats (added by komodo team)
     /// - the transmission channel for address book update events,
     /// - a watch channel for address book metrics, and
     /// - the address book updater task join handle.
@@ -41,7 +41,7 @@ impl AddressBookUpdater {
         local_listener: SocketAddr,
     ) -> (
         Arc<std::sync::Mutex<AddressBook>>,
-        Arc<std::sync::Mutex<InboundConns>>,
+        Arc<std::sync::Mutex<PeerStats>>,
         mpsc::Sender<MetaAddrChange>,
         watch::Receiver<AddressMetrics>,
         JoinHandle<Result<(), BoxError>>,
@@ -60,13 +60,10 @@ impl AddressBookUpdater {
         let address_metrics = address_book.address_metrics_watcher();
         let address_book = Arc::new(std::sync::Mutex::new(address_book));
 
-        let inbound_conns = InboundConns::new(
-            config.network,
-        );
-        let inbound_conns = Arc::new(std::sync::Mutex::new(inbound_conns));
+        let peer_stats = PeerStats::new(config);
 
         let worker_address_book = address_book.clone();
-        let worker_inbound_conns = inbound_conns.clone();
+        let worker_peer_stats = peer_stats.clone();
 
         let worker = move || {
             info!("starting the address book updater");
@@ -83,7 +80,8 @@ impl AddressBookUpdater {
                     .expect("mutex should be unpoisoned")
                     .update(event);
 
-                worker_inbound_conns
+                // use same channel to update peer stat too
+                worker_peer_stats
                     .lock()
                     .expect("mutex should be unpoisoned")
                     .update(event);
@@ -102,7 +100,7 @@ impl AddressBookUpdater {
 
         (
             address_book,
-            inbound_conns,
+            peer_stats,
             worker_tx,
             address_metrics,
             address_book_updater_task_handle,

@@ -46,12 +46,24 @@ pub mod chain;
 #[allow(missing_docs)]
 pub mod error;
 
-pub use block::VerifyBlockError;
+pub use block::{
+    subsidy::{
+        funding_streams::{
+            funding_stream_address, /*funding_stream_recipient_info,*/ funding_stream_values,
+            height_for_first_halving, // new_coinbase_script,
+        },
+        general::komodo_miner_subsidy,
+    },
+    Request, VerifyBlockError, MAX_BLOCK_SIGOPS,
+};
+pub use chain::VerifyChainError;
 pub use checkpoint::{
     CheckpointList, VerifyCheckpointError, MAX_CHECKPOINT_BYTE_COUNT, MAX_CHECKPOINT_HEIGHT_GAP,
 };
+
 pub use config::Config;
 pub use error::BlockError;
+pub use parameters::FundingStreamReceiver;
 pub use primitives::{ed25519, groth16, halo2, redjubjub, redpallas};
 
 /// A boxed [`std::error::Error`].

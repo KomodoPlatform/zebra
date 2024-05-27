@@ -12,7 +12,7 @@ use proptest::{
 use tower::{buffer::Buffer, util::BoxService, Service, ServiceExt};
 
 use zebra_chain::{
-    block::Block,
+    block::{Block, self},
     fmt::SummaryDebug,
     history_tree::HistoryTree,
     parameters::{Network, NetworkUpgrade},
@@ -198,7 +198,7 @@ pub async fn populated_state(
         .map(|block| Request::CommitFinalizedBlock(block.into()));
 
     let (state, read_state, latest_chain_tip, chain_tip_change) =
-        StateService::new(Config::ephemeral(), network);
+        StateService::new(Config::ephemeral(), network, block::Height::MAX, 0);
     let mut state = Buffer::new(BoxService::new(state), 1);
 
     let mut responses = FuturesUnordered::new();

@@ -33,7 +33,10 @@ use zebra_state as zs;
 use crate::{error::*, transaction as tx, BoxError};
 
 pub mod check;
-mod subsidy;
+pub mod request;
+pub mod subsidy;
+
+pub use request::Request;
 
 #[cfg(test)]
 mod tests;
@@ -73,8 +76,24 @@ pub enum VerifyBlockError {
     #[error("unable to commit block after semantic verification")]
     Commit(#[source] BoxError),
 
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    #[error("unable to validate block proposal: failed semantic verification (proof of work is not checked for proposals)")]
+    // TODO: make this into a concrete type (see #5732)
+    ValidateProposal(#[source] BoxError),
+
     #[error("invalid transaction")]
     Transaction(#[from] TransactionError),
+}
+
+impl VerifyBlockError {
+    /// Returns `true` if this is definitely a duplicate request.
+    /// Some duplicate requests might not be detected, and therefore return `false`.
+    pub fn is_duplicate_request(&self) -> bool {
+        match self {
+            VerifyBlockError::Block { source, .. } => source.is_duplicate_request(),
+            _ => false,
+        }
+    }
 }
 
 /// The maximum allowed number of legacy signature check operations in a block.
@@ -102,7 +121,7 @@ where
     }
 }
 
-impl<S, V> Service<Arc<Block>> for BlockVerifier<S, V>
+impl<S, V> Service<Request> for BlockVerifier<S, V>
 where
     S: Service<zs::Request, Response = zs::Response, Error = BoxError> + Send + Clone + 'static,
     S::Future: Send + 'static,
@@ -121,10 +140,12 @@ where
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, block: Arc<Block>) -> Self::Future {
+    fn call(&mut self, request: Request) -> Self::Future {
         let mut state_service = self.state_service.clone();
         let mut transaction_verifier = self.transaction_verifier.clone();
         let network = self.network;
+
+        let block = request.block();
 
         // We don't include the block hash, because it's likely already in a parent span
         let span = tracing::debug_span!("block", height = ?block.coinbase_height());
@@ -302,6 +323,23 @@ where
                 new_outputs,
                 transaction_hashes,
             };
+
+            // Return early for proposal requests when getblocktemplate-rpcs feature is enabled
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            if request.is_proposal() {
+                return match state_service
+                    .ready()
+                    .await
+                    .map_err(VerifyBlockError::ValidateProposal)?
+                    .call(zs::Request::CheckBlockProposalValidity(prepared_block))
+                    .await
+                    .map_err(VerifyBlockError::ValidateProposal)?
+                {
+                    zs::Response::ValidBlockProposal => Ok(hash),
+                    _ => unreachable!("wrong response for CheckBlockProposalValidity"),
+                };
+            }
+
             match state_service
                 .ready()
                 .await

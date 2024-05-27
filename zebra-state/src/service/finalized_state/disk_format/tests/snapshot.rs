@@ -11,7 +11,7 @@
 //!
 //! If this test fails, run:
 //! ```sh
-//! cargo insta test --review --delete-unreferenced-snapshots
+//! cargo insta test --review
 //! ```
 //! to update the test snapshots, then commit the `test_*.snap` files using git.
 //!
@@ -36,17 +36,21 @@ use zebra_chain::{
 };
 
 use crate::{
-    service::finalized_state::{disk_db::DiskDb, disk_format::tests::KV, FinalizedState},
+    service::finalized_state::{
+        disk_db::{DiskDb, DB},
+        disk_format::tests::KV,
+        FinalizedState,
+    },
     Config,
 };
 
 /// Snapshot test for RocksDB column families, and their key-value data.
 ///
 /// These snapshots contain the `default` column family, but it is not used by Zebra.
-#[ignore]  // Blocks are different in Komodo. TODO fix for KMD net
+#[ignore = "fix for komodo blocks"]  // Blocks are different in Komodo. TODO fix for KMD net
 #[test]
 fn test_raw_rocksdb_column_families() {
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     test_raw_rocksdb_column_families_with_network(Mainnet);
     test_raw_rocksdb_column_families_with_network(Testnet);
@@ -59,7 +63,12 @@ fn test_raw_rocksdb_column_families_with_network(network: Network) {
     let mut net_suffix = network.to_string();
     net_suffix.make_ascii_lowercase();
 
-    let mut state = FinalizedState::new(&Config::ephemeral(), network);
+    let mut state = FinalizedState::new(
+        &Config::ephemeral(),
+        network,
+        #[cfg(feature = "elasticsearch")]
+        None,
+    );
 
     // Snapshot the column family names
     let mut cf_names = state.db.list_cf().expect("empty database is valid");
@@ -99,7 +108,7 @@ fn test_raw_rocksdb_column_families_with_network(network: Network) {
             .expect("test block is valid");
 
         let mut settings = insta::Settings::clone_current();
-        settings.set_snapshot_suffix(format!("{}_{}", net_suffix, height));
+        settings.set_snapshot_suffix(format!("{net_suffix}_{height}"));
 
         settings.bind(|| snapshot_raw_rocksdb_column_family_data(&state.db, &cf_names));
     }
@@ -130,6 +139,7 @@ fn snapshot_raw_rocksdb_column_family_data(db: &DiskDb, original_cf_names: &[Str
         // The default raw data serialization is very verbose, so we hex-encode the bytes.
         let cf_data: Vec<KV> = cf_iter
             .by_ref()
+            .map(|result| result.expect("unexpected database error"))
             .map(|(key, value)| KV::new(key, value))
             .collect();
 
@@ -137,16 +147,18 @@ fn snapshot_raw_rocksdb_column_family_data(db: &DiskDb, original_cf_names: &[Str
             assert_eq!(cf_data.len(), 0, "default column family is never used");
         } else if cf_data.is_empty() {
             // distinguish column family names from empty column families
-            empty_column_families.push(format!("{}: no entries", cf_name));
+            empty_column_families.push(format!("{cf_name}: no entries"));
         } else {
             // The note commitment tree snapshots will change if the trees do not have cached roots.
             // But we expect them to always have cached roots,
             // because those roots are used to populate the anchor column families.
-            insta::assert_ron_snapshot!(format!("{}_raw_data", cf_name), cf_data);
+            insta::assert_ron_snapshot!(format!("{cf_name}_raw_data"), cf_data);
         }
 
+        let raw_cf_iter: rocksdb::DBRawIteratorWithThreadMode<DB> = cf_iter.into();
+
         assert_eq!(
-            cf_iter.status(),
+            raw_cf_iter.status(),
             Ok(()),
             "unexpected column family iterator error",
         );

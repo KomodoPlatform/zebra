@@ -12,10 +12,27 @@ use zebra_chain::{
     work::difficulty::{CompactDifficulty, ExpandedDifficulty}, transparent, amount::{Amount, NonNegative}, transaction::{LockTime, Transaction}, interest::KOMODO_MAXMEMPOOLTIME,
 };
 
-use crate::{constants, BoxError, PreparedBlock, ValidateContextError};
+use crate::{
+    service::{
+        block_iter::any_ancestor_blocks, check::difficulty::POW_ADJUSTMENT_BLOCK_SPAN,
+        finalized_state::ZebraDb, non_finalized_state::NonFinalizedState,
+    },
+    BoxError, PreparedBlock, ValidateContextError,
+};
 
 // use self as check
 use super::check;
+
+// These types are used in doc links
+#[allow(unused_imports)]
+use crate::service::non_finalized_state::Chain;
+
+/*use crate::{constants, BoxError, PreparedBlock, ValidateContextError
+    check::difficulty::POW_ADJUSTMENT_BLOCK_SPAN,
+};*/
+
+// use self as check
+//use super::{check, finalized_state::ZebraDb, non_finalized_state::NonFinalizedState, block_iter::any_ancestor_blocks};
 use std::cmp::max;
 
 use crate::komodo_notaries::*;
@@ -31,7 +48,9 @@ pub(crate) mod utxo;
 #[cfg(test)]
 mod tests;
 
-use difficulty::{AdjustedDifficulty, POW_MEDIAN_BLOCK_SPAN};
+use difficulty::{POW_MEDIAN_BLOCK_SPAN};
+
+pub(crate) use difficulty::AdjustedDifficulty;
 
 /// Check that the `prepared` block is contextually valid for `network`, based
 /// on the `finalized_tip_height` and `relevant_chain`.
@@ -136,15 +155,16 @@ where
 
 /// Check that `block` is contextually valid for `network`, using
 /// the `history_tree` up to and including the previous block.
+/// komodo added check of sapling root
 #[tracing::instrument(skip(block, history_tree))]
 pub(crate) fn block_commitment_is_valid_for_chain_history(
     block: Arc<Block>,
     network: Network,
     history_tree: &HistoryTree,
+    sapling_root: &zebra_chain::sapling::tree::Root,
 ) -> Result<(), ValidateContextError> {
     match block.commitment(network)? {
         block::Commitment::PreSaplingReserved(_)
-        | block::Commitment::FinalSaplingRoot(_)
         | block::Commitment::ChainHistoryActivationReserved => {
             // # Consensus
             //
@@ -159,6 +179,20 @@ pub(crate) fn block_commitment_is_valid_for_chain_history(
             //
             // We also don't need to do anything in the other cases.
             Ok(())
+        }
+        block::Commitment::FinalSaplingRoot(block_sapling_root) => {
+            // check sapling root
+            // added for Komodo
+            if &block_sapling_root == sapling_root {
+                Ok(())
+            } else {
+                Err(ValidateContextError::InvalidBlockCommitment(
+                    CommitmentError::InvalidFinalSaplingRoot {
+                        actual: block_sapling_root.into(),
+                        expected: sapling_root.into(),
+                    },
+                ))
+            }
         }
         block::Commitment::ChainHistoryRoot(actual_history_tree_root) => {
             // # Consensus
@@ -332,15 +366,23 @@ fn difficulty_threshold_is_valid(
 }
 
 /// Check if zebra is following a legacy chain and return an error if so.
+///
+/// `nu5_activation_height` should be `NetworkUpgrade::Nu5.activation_height(network)`, and
+/// `max_legacy_chain_blocks` should be [`MAX_LEGACY_CHAIN_BLOCKS`](crate::constants::MAX_LEGACY_CHAIN_BLOCKS).
+/// They are only changed from the defaults for testing.
 pub(crate) fn legacy_chain<I>(
     nu5_activation_height: block::Height,
     ancestors: I,
     network: Network,
+    max_legacy_chain_blocks: usize,
 ) -> Result<(), BoxError>
 where
     I: Iterator<Item = Arc<Block>>,
 {
-    for (count, block) in ancestors.enumerate() {
+    let mut ancestors = ancestors.peekable();
+    let tip_height = ancestors.peek().and_then(|block| block.coinbase_height());
+
+    for (index, block) in ancestors.enumerate() {
         // Stop checking if the chain reaches Canopy. We won't find any more V5 transactions,
         // so the rest of our checks are useless.
         //
@@ -355,9 +397,14 @@ where
         }
 
         // If we are past our NU5 activation height, but there are no V5 transactions in recent blocks,
-        // the Zebra instance that verified those blocks had no NU5 activation height.
-        if count >= constants::MAX_LEGACY_CHAIN_BLOCKS {
-            return Err("giving up after checking too many blocks".into());
+        // the last Zebra instance that updated this cached state had no NU5 activation height.
+        if index >= max_legacy_chain_blocks {
+            return Err(format!(
+                "could not find any transactions in recent blocks: \
+                 checked {index} blocks back from {:?}",
+                tip_height.expect("database contains valid blocks"),
+            )
+            .into());
         }
 
         // If a transaction `network_upgrade` field is different from the network upgrade calculated
@@ -365,7 +412,9 @@ where
         // network upgrade heights.
         block
             .check_transaction_network_upgrade_consistency(network)
-            .map_err(|_| "inconsistent network upgrade found in transaction")?;
+            .map_err(|error| {
+                format!("inconsistent network upgrade found in transaction: {error:?}")
+            })?;
 
         // If we find at least one transaction with a valid `network_upgrade` field, the Zebra instance that
         // verified those blocks used the same network upgrade heights. (Up to this point in the chain.)
@@ -382,31 +431,30 @@ where
     Ok(())
 }
 
-/// get median time past for a chain
-pub(crate) fn get_median_time_past_for_chain<C>(network: Network, relevant_chain: C) -> Option<DateTime<Utc>>
-where 
-    C: IntoIterator,
-    C::Item: Borrow<Block>,
-    C::IntoIter: ExactSizeIterator,
-{
+/// Perform initial contextual validity checks for the configured network,
+/// based on the committed finalized and non-finalized state.
+///
+/// Additional contextual validity checks are performed by the non-finalized [`Chain`].
+pub(crate) fn initial_contextual_validity(
+    finalized_state: &ZebraDb,
+    non_finalized_state: &NonFinalizedState,
+    prepared: &PreparedBlock,
+) -> Result<(), ValidateContextError> {
+    let relevant_chain = any_ancestor_blocks(
+        non_finalized_state,
+        finalized_state,
+        prepared.block.header.previous_block_hash,
+    );
 
-    let relevant_chain: Vec<_> = relevant_chain
-                    .into_iter()
-                    .take(POW_AVERAGING_WINDOW + POW_MEDIAN_BLOCK_SPAN)
-                    .collect();
-    if relevant_chain.len() >= POW_AVERAGING_WINDOW + POW_MEDIAN_BLOCK_SPAN  {
-        let relevant_data = relevant_chain.iter().map(|block| {
-            (
-                block.borrow().header.difficulty_threshold,
-                block.borrow().header.time,
-            )
-        });
-                
-        let tip_block = relevant_chain[ relevant_chain.len()-1 ].borrow();
-        let difficulty_adjustment =
-            AdjustedDifficulty::new_from_block(tip_block, network, relevant_data);
+    // Security: check proof of work before any other checks
+    check::block_is_valid_for_recent_chain(
+        prepared,
+        non_finalized_state.network,
+        finalized_state.finalized_tip_height(),
+        relevant_chain,
+    )?;
 
-        return Some(difficulty_adjustment.median_time_past());
-    }
-    None
+    check::nullifier::no_duplicates_in_finalized_chain(prepared, finalized_state)?;
+
+    Ok(())
 }

@@ -202,7 +202,7 @@ pub(crate) const CONSENSUS_BRANCH_IDS: &[(NetworkUpgrade, ConsensusBranchId)] = 
 const PRE_BLOSSOM_POW_TARGET_SPACING: i64 = 60;
 
 /// The target block spacing after Blossom activation.
-pub const POST_BLOSSOM_POW_TARGET_SPACING: i64 = 75;
+pub const POST_BLOSSOM_POW_TARGET_SPACING: u32 = 75;
 
 /// The averaging window for difficulty threshold arithmetic mean calculations.
 ///
@@ -356,7 +356,7 @@ impl NetworkUpgrade {
     pub fn target_spacing(&self, network: Network) -> Duration {
         let spacing_seconds = match self {
             Genesis | BeforeOverwinter | Overwinter | Sapling => if network == Network::Testnet { 5 * PRE_BLOSSOM_POW_TARGET_SPACING / 2 } else { PRE_BLOSSOM_POW_TARGET_SPACING },
-            Blossom | Heartwood | Canopy | Nu5 => POST_BLOSSOM_POW_TARGET_SPACING,
+            Blossom | Heartwood | Canopy | Nu5 => POST_BLOSSOM_POW_TARGET_SPACING.into(),
         };
         Duration::seconds(spacing_seconds)
     }
@@ -371,8 +371,8 @@ impl NetworkUpgrade {
     /// Returns all the target block spacings for `network` and the heights where they start.
     pub fn target_spacings(network: Network) -> impl Iterator<Item = (block::Height, Duration)> {
         [
-            (NetworkUpgrade::Genesis, if network == Network::Testnet { 5 * PRE_BLOSSOM_POW_TARGET_SPACING / 2 } else { PRE_BLOSSOM_POW_TARGET_SPACING }), // dimxy fix for kmd testnet
-            (NetworkUpgrade::Blossom, POST_BLOSSOM_POW_TARGET_SPACING),
+            (NetworkUpgrade::Genesis, if network == Network::Testnet { 5 * PRE_BLOSSOM_POW_TARGET_SPACING / 2 } else { PRE_BLOSSOM_POW_TARGET_SPACING.into() }), // dimxy fix for kmd testnet
+            (NetworkUpgrade::Blossom, POST_BLOSSOM_POW_TARGET_SPACING.into()),
         ]
         .into_iter()
         .map(move |(upgrade, spacing_seconds)| {

@@ -77,7 +77,7 @@ pub struct Downloads<ZN, ZV, ZS>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Clone + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
     ZV::Future: Send,
     ZS: Service<zs::Request, Response = zs::Response, Error = BoxError> + Send + Clone + 'static,
     ZS::Future: Send,
@@ -117,7 +117,7 @@ impl<ZN, ZV, ZS> Stream for Downloads<ZN, ZV, ZS>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Clone + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
     ZV::Future: Send,
     ZS: Service<zs::Request, Response = zs::Response, Error = BoxError> + Send + Clone + 'static,
     ZS::Future: Send,
@@ -160,7 +160,7 @@ impl<ZN, ZV, ZS> Downloads<ZN, ZV, ZS>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Clone + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError> + Send + Clone + 'static,
     ZV::Future: Send,
     ZS: Service<zs::Request, Response = zs::Response, Error = BoxError> + Send + Clone + 'static,
     ZS::Future: Send,
@@ -279,7 +279,7 @@ where
 
             let max_lookahead_height = if let Some(tip_height) = tip_height {
                 let lookahead = i32::try_from(full_verify_concurrency_limit).expect("fits in i32");
-                (tip_height + lookahead).expect("tip is much lower than Height::MAX")
+                (tip_height + lookahead.into()).expect("tip is much lower than Height::MAX")
             } else {
                 let genesis_lookahead =
                     u32::try_from(full_verify_concurrency_limit - 1).expect("fits in u32");
@@ -338,7 +338,7 @@ where
             }
 
             verifier
-                .oneshot(block)
+                .oneshot(zebra_consensus::Request::Commit(block))
                 .await
                 .map(|hash| (hash, block_height))
         }

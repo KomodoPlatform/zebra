@@ -1,6 +1,7 @@
 use tokio::sync::watch;
 
 use super::RecentSyncLengths;
+use zebra_chain::chain_sync_status::ChainSyncStatus;
 
 #[cfg(test)]
 mod tests;
@@ -83,5 +84,31 @@ impl SyncStatus {
         for _ in 0..RecentSyncLengths::MAX_RECENT_LENGTHS {
             recent_syncs.push_extend_tips_length(Self::MIN_DIST_FROM_TIP * 10);
         }
+    }
+}
+
+impl ChainSyncStatus for SyncStatus {
+    /// Check if the synchronization is likely close to the chain tip.
+    fn is_close_to_tip(&self) -> bool {
+        let sync_lengths = self.latest_sync_length.borrow();
+
+        // Return early if sync_lengths is empty.
+        if sync_lengths.is_empty() {
+            return false;
+        }
+
+        // Compute the sum of the `sync_lengths`.
+        // The sum is computed by saturating addition in order to avoid overflowing.
+        let sum = sync_lengths
+            .iter()
+            .fold(0usize, |sum, rhs| sum.saturating_add(*rhs));
+
+        // Compute the average sync length.
+        // This value effectively represents a simple moving average.
+        let avg = sum / sync_lengths.len();
+
+        // The synchronization process is close to the chain tip once the
+        // average sync length falls below the threshold.
+        avg < Self::MIN_DIST_FROM_TIP
     }
 }

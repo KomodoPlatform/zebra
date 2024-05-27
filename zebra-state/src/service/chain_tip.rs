@@ -5,22 +5,18 @@
 //! * [LatestChainTip] for efficient access to the current best tip, and
 //! * [ChainTipChange] to `await` specific changes to the chain tip.
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
 
 use chrono::{DateTime, Utc, NaiveDateTime};
+use futures::TryFutureExt;
 use tokio::sync::watch;
 use tracing::{field, instrument};
 
-#[cfg(any(test, feature = "proptest-impl"))]
-use proptest_derive::Arbitrary;
-
-#[cfg(any(test, feature = "proptest-impl"))]
-use zebra_chain::serialization::arbitrary::datetime_full;
 use zebra_chain::{
     block,
-    chain_tip::ChainTip,
+    chain_tip::{BestTipChanged, ChainTip},
     parameters::{Network, NetworkUpgrade},
-    transaction,
+    transaction::{self, Transaction},
 };
 
 use crate::{
@@ -28,6 +24,12 @@ use crate::{
 };
 
 use TipAction::*;
+
+#[cfg(any(test, feature = "proptest-impl"))]
+use proptest_derive::Arbitrary;
+
+#[cfg(any(test, feature = "proptest-impl"))]
+use zebra_chain::serialization::arbitrary::datetime_full;
 
 #[cfg(test)]
 mod tests;
@@ -56,6 +58,9 @@ pub struct ChainTipBlock {
     )]
     pub time: DateTime<Utc>,
 
+    /// The block transactions.
+    pub transactions: Vec<Arc<Transaction>>,
+
     /// The mined transaction IDs of the transactions in `block`,
     /// in the same order as `block.transactions`.
     pub transaction_hashes: Arc<[transaction::Hash]>,
@@ -76,6 +81,17 @@ pub struct ChainTipBlock {
     pub mtp: i64,
 }
 
+
+impl fmt::Display for ChainTipBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ChainTipBlock")
+            .field("height", &self.height)
+            .field("hash", &self.hash)
+            .field("transactions", &self.transactions.len())
+            .finish()
+    }
+}
+
 impl From<ContextuallyValidBlock> for ChainTipBlock {
     fn from(contextually_valid: ContextuallyValidBlock) -> Self {
         let ContextuallyValidBlock {
@@ -90,6 +106,7 @@ impl From<ContextuallyValidBlock> for ChainTipBlock {
             hash,
             height,
             time: block.header.time,
+            transactions: block.transactions.clone(),
             transaction_hashes,
             previous_block_hash: block.header.previous_block_hash,
             mtp: -1,
@@ -106,10 +123,12 @@ impl From<FinalizedBlock> for ChainTipBlock {
             transaction_hashes,
             ..
         } = finalized;
+
         Self {
             hash,
             height,
             time: block.header.time,
+            transactions: block.transactions.clone(),
             transaction_hashes,
             previous_block_hash: block.header.previous_block_hash,
             mtp: -1,
@@ -183,7 +202,6 @@ impl ChainTipSender {
         &mut self,
         new_tip: impl Into<Option<ChainTipBlock>> + Clone,
     ) {
-
         let new_tip = new_tip.into();
         self.record_fields(&new_tip);
 
@@ -247,11 +265,11 @@ impl ChainTipSender {
         let old_tip = &*self.sender.borrow();
 
         Self::record_tip(&span, "new", new_tip);
-        Self::record_tip(&span, "old", &old_tip);
+        Self::record_tip(&span, "old", old_tip);
 
         span.record(
             "old_use_non_finalized_tip",
-            &field::debug(self.use_non_finalized_tip),
+            field::debug(self.use_non_finalized_tip),
         );
     }
 
@@ -262,8 +280,8 @@ impl ChainTipSender {
         let height = tip.as_ref().map(|block| block.height);
         let hash = tip.as_ref().map(|block| block.hash);
 
-        span.record(format!("{}_height", prefix).as_str(), &field::debug(height));
-        span.record(format!("{}_hash", prefix).as_str(), &field::debug(hash));
+        span.record(format!("{prefix}_height").as_str(), field::debug(height));
+        span.record(format!("{prefix}_hash").as_str(), field::debug(hash));
     }
 }
 
@@ -307,6 +325,8 @@ impl LatestChainTip {
     /// A single read lock is acquired to clone `T`, and then released after the clone.
     /// See the performance note on [`WatchReceiver::with_watch_data`].
     ///
+    /// Does not mark the watched data as seen.
+    ///
     /// # Correctness
     ///
     /// To avoid deadlocks, see the correctness note on [`WatchReceiver::with_watch_data`].
@@ -319,23 +339,23 @@ impl LatestChainTip {
         let register_span_fields = |chain_tip_block: Option<&ChainTipBlock>| {
             span.record(
                 "height",
-                &tracing::field::debug(chain_tip_block.map(|block| block.height)),
+                tracing::field::debug(chain_tip_block.map(|block| block.height)),
             );
             span.record(
                 "hash",
-                &tracing::field::debug(chain_tip_block.map(|block| block.hash)),
+                tracing::field::debug(chain_tip_block.map(|block| block.hash)),
             );
             span.record(
                 "time",
-                &tracing::field::debug(chain_tip_block.map(|block| block.time)),
+                tracing::field::debug(chain_tip_block.map(|block| block.time)),
             );
             span.record(
                 "previous_hash",
-                &tracing::field::debug(chain_tip_block.map(|block| block.previous_block_hash)),
+                tracing::field::debug(chain_tip_block.map(|block| block.previous_block_hash)),
             );
             span.record(
                 "transaction_count",
-                &tracing::field::debug(chain_tip_block.map(|block| block.transaction_hashes.len())),
+                tracing::field::debug(chain_tip_block.map(|block| block.transaction_hashes.len())),
             );
         };
 
@@ -348,6 +368,7 @@ impl LatestChainTip {
         })
     }
 
+    /// gets MTP value from best chain_tip
     pub fn get_mtp_on_best_tip(&self) -> Option<DateTime<Utc>> {
         self.receiver.with_watch_data(|chain_tip_block| {
             chain_tip_block.as_ref().map(|ctb| {
@@ -362,7 +383,6 @@ impl LatestChainTip {
 }
 
 impl ChainTip for LatestChainTip {
-
     #[instrument(skip(self))]
     fn best_tip_height(&self) -> Option<block::Height> {
         self.with_chain_tip_block(|block| block.height)
@@ -392,6 +412,19 @@ impl ChainTip for LatestChainTip {
     fn best_tip_mined_transaction_ids(&self) -> Arc<[transaction::Hash]> {
         self.with_chain_tip_block(|block| block.transaction_hashes.clone())
             .unwrap_or_else(|| Arc::new([]))
+    }
+
+    /// Returns when the state tip changes.
+    ///
+    /// Marks the state tip as seen when the returned future completes.
+    #[instrument(skip(self))]
+    fn best_tip_changed(&mut self) -> BestTipChanged {
+        BestTipChanged::new(self.receiver.changed().err_into())
+    }
+
+    /// Mark the current best state tip as seen.
+    fn mark_best_tip_seen(&mut self) {
+        self.receiver.mark_as_seen();
     }
 }
 

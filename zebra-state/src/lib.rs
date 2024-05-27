@@ -23,13 +23,15 @@ mod error;
 mod request;
 mod response;
 mod service;
-mod util;
 
 #[allow(missing_docs)]
 pub mod komodo_notaries;
 
 #[allow(missing_docs)]
 pub mod komodo_test_helpers;
+
+#[cfg(feature = "getblocktemplate-rpcs")]
+pub use response::GetBlockTemplateChainInfo;
 
 #[cfg(test)]
 mod tests;
@@ -38,10 +40,11 @@ pub use config::{check_and_delete_old_databases, Config};
 pub use constants::MAX_BLOCK_REORG_HEIGHT;
 pub use error::{BoxError, CloneError, CommitBlockError, ValidateContextError};
 pub use request::{FinalizedBlock, HashOrHeight, PreparedBlock, ReadRequest, Request};
-pub use response::{ReadResponse, Response};
+pub use response::{ReadResponse, Response, MinedTx};
 pub use service::{
     chain_tip::{ChainTipChange, LatestChainTip, TipAction},
     init, OutputIndex, OutputLocation, TransactionLocation,
+    spawn_init,
 };
 
 #[cfg(any(test, feature = "proptest-impl"))]

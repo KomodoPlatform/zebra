@@ -11,33 +11,31 @@ use std::{
 use chrono::{DateTime, Utc};
 use zebra_chain::{
     block::{self, Block},
-    history_tree::HistoryTree,
-    orchard,
     parameters::Network,
-    sapling, sprout, transparent::{self, outputs_from_utxos, utxos_from_ordered_utxos},
+    sprout, transparent::{self, outputs_from_utxos, utxos_from_ordered_utxos}, komodo_nota::BackNotarisationData,
 };
 
-use zebra_chain::komodo_nota::BackNotarisationData;
-use crate::komodo_notaries::komodo_block_has_notarisation_tx;
-
 use crate::{
-    request::ContextuallyValidBlock,
+    request::{ContextuallyValidBlock, FinalizedWithTrees},
     service::{check, finalized_state::ZebraDb},
-    FinalizedBlock, PreparedBlock, ValidateContextError
+    PreparedBlock, ValidateContextError, komodo_notaries::komodo_block_has_notarisation_tx,
 };
 
 mod chain;
-mod queued_blocks;
 
 #[cfg(test)]
 mod tests;
 
-pub use queued_blocks::QueuedBlocks;
-
 pub(crate) use chain::Chain;
 
 /// The state of the chains in memory, including queued blocks.
-#[derive(Debug, Clone)]
+///
+/// Clones of the non-finalized state contain independent copies of the chains.
+/// This is different from `FinalizedState::clone()`,
+/// which returns a shared reference to the database.
+///
+/// Most chain data is clone-on-write using [`Arc`].
+#[derive(Clone, Debug)]
 pub struct NonFinalizedState {
     /// Verified, non-finalized chains, in ascending order.
     ///
@@ -45,9 +43,14 @@ pub struct NonFinalizedState {
     pub chain_set: BTreeSet<Arc<Chain>>,
 
     /// The configured Zcash network.
-    //
-    // Note: this field is currently unused, but it's useful for debugging.
     pub network: Network,
+
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    /// Configures the non-finalized state to count metrics.
+    ///
+    /// Used for skipping metrics counting when testing block proposals
+    /// with a commit to a cloned non-finalized state.
+    pub should_count_metrics: bool,
 
     /// notarisation object pointing to the last notarised height
     pub last_nota: Option<BackNotarisationData>,
@@ -62,6 +65,8 @@ impl NonFinalizedState {
         NonFinalizedState {
             chain_set: Default::default(),
             network,
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            should_count_metrics: true,
             last_nota: None,
             last_nota_block_hash: None,
         }
@@ -92,7 +97,7 @@ impl NonFinalizedState {
 
     /// Finalize the lowest height block in the non-finalized portion of the best
     /// chain and update all side-chains to match.
-    pub fn finalize(&mut self) -> FinalizedBlock {
+    pub fn finalize(&mut self) -> FinalizedWithTrees {
         // Chain::cmp uses the partial cumulative work, and the hash of the tip block.
         // Neither of these fields has interior mutability.
         // (And when the tip block is dropped for a chain, the chain is also dropped.)
@@ -102,14 +107,16 @@ impl NonFinalizedState {
 
         // extract best chain
         let mut best_chain = chains.next_back().expect("there's at least one chain");
+
         // clone if required
-        let write_best_chain = Arc::make_mut(&mut best_chain);
+        let mut_best_chain = Arc::make_mut(&mut best_chain);
 
         // extract the rest into side_chains so they can be mutated
         let side_chains = chains;
 
-        // remove the lowest height block from the best_chain to be finalized
-        let finalizing = write_best_chain.pop_root();
+        // Pop the lowest height block from the best chain to be finalized, and
+        // also obtain its associated treestate.
+        let (best_chain_root, root_treestate) = mut_best_chain.pop_root();
 
         // add best_chain back to `self.chain_set`
         if !best_chain.is_empty() {
@@ -117,11 +124,11 @@ impl NonFinalizedState {
         }
 
         // for each remaining chain in side_chains
-        for mut chain in side_chains {
-            if chain.non_finalized_root_hash() != finalizing.hash {
+        for mut side_chain in side_chains {
+            if side_chain.non_finalized_root_hash() != best_chain_root.hash {
                 // If we popped the root, the chain would be empty or orphaned,
                 // so just drop it now.
-                drop(chain);
+                drop(side_chain);
 
                 continue;
             }
@@ -129,19 +136,20 @@ impl NonFinalizedState {
             // otherwise, the popped root block is the same as the finalizing block
 
             // clone if required
-            let write_chain = Arc::make_mut(&mut chain);
+            let mut_side_chain = Arc::make_mut(&mut side_chain);
 
             // remove the first block from `chain`
-            let chain_start = write_chain.pop_root();
-            assert_eq!(chain_start.hash, finalizing.hash);
+            let (side_chain_root, _treestate) = mut_side_chain.pop_root();
+            assert_eq!(side_chain_root.hash, best_chain_root.hash);
 
             // add the chain back to `self.chain_set`
-            self.chain_set.insert(chain);
+            self.chain_set.insert(side_chain);
         }
 
         self.update_metrics_for_chains();
 
-        finalizing.into()
+        // Add the treestate to the finalized block.
+        FinalizedWithTrees::new(best_chain_root, root_treestate)
     }
 
     /// Commit block to the non-finalized state, on top of:
@@ -156,13 +164,7 @@ impl NonFinalizedState {
         let parent_hash = prepared.block.header.previous_block_hash;
         let (height, hash) = (prepared.height, prepared.hash);
 
-        let parent_chain = self.parent_chain(
-            parent_hash,
-            finalized_state.sprout_note_commitment_tree(),
-            finalized_state.sapling_note_commitment_tree(),
-            finalized_state.orchard_note_commitment_tree(),
-            finalized_state.history_tree(),
-        )?;
+        let parent_chain = self.parent_chain(parent_hash)?;
 
         // If the block is invalid, return the error,
         // and drop the cloned parent Arc, or newly created chain fork.
@@ -184,13 +186,23 @@ impl NonFinalizedState {
     /// Commit block to the non-finalized state as a new chain where its parent
     /// is the finalized tip.
     #[tracing::instrument(level = "debug", skip(self, finalized_state, prepared))]
+    #[allow(clippy::unwrap_in_result)]
     pub fn commit_new_chain(
         &mut self,
         prepared: PreparedBlock,
         finalized_state: &ZebraDb,
     ) -> Result<(), ValidateContextError> {
+        let finalized_tip_height = finalized_state.finalized_tip_height();
+
+        // TODO: fix tests that don't initialize the finalized state
+        #[cfg(not(test))]
+        let finalized_tip_height = finalized_tip_height.expect("finalized state contains blocks");
+        #[cfg(test)]
+        let finalized_tip_height = finalized_tip_height.unwrap_or(zebra_chain::block::Height(0));
+
         let chain = Chain::new(
             self.network,
+            finalized_tip_height,
             finalized_state.sprout_note_commitment_tree(),
             finalized_state.sapling_note_commitment_tree(),
             finalized_state.orchard_note_commitment_tree(),
@@ -211,26 +223,25 @@ impl NonFinalizedState {
 
     /// Contextually validate `prepared` using `finalized_state`.
     /// If validation succeeds, push `prepared` onto `new_chain`.
-    /// komodo: also updates the latest nota
     ///
     /// `new_chain` should start as a clone of the parent chain fork,
     /// or the finalized tip.
     #[tracing::instrument(level = "debug", skip(self, finalized_state, new_chain))]
     fn validate_and_commit(
-        &mut self,  // TODO remove mut when last_nota moved to channel
+        &mut self,
         new_chain: Arc<Chain>,
         prepared: PreparedBlock,
         finalized_state: &ZebraDb,
     ) -> Result<Arc<Chain>, ValidateContextError> {
-        // Reads from disk
-        //
 
         // komodo: get chain tip last block time to calc interest
         let last_block_time = Self::komodo_get_last_block_time(finalized_state, new_chain.clone(), &prepared);
 
+        // Reads from disk
+        //
         // TODO: if these disk reads show up in profiles, run them in parallel, using std::thread::spawn()
         let spent_utxos = check::utxo::transparent_spend(
-            new_chain.network(),
+            self.network,
             &prepared,
             last_block_time,
             &new_chain.unspent_utxos(),
@@ -239,22 +250,25 @@ impl NonFinalizedState {
         )?;
 
         // Reads from disk
-        check::anchors::sapling_orchard_anchors_refer_to_final_treestates(
+        check::anchors::block_sapling_orchard_anchors_refer_to_final_treestates(
             finalized_state,
             &new_chain,
             &prepared,
         )?;
 
         // Reads from disk
-        let sprout_final_treestates =
-            check::anchors::fetch_sprout_final_treestates(finalized_state, &new_chain, &prepared);
+        let sprout_final_treestates = check::anchors::block_fetch_sprout_final_treestates(
+            finalized_state,
+            &new_chain,
+            &prepared,
+        ); 
 
         // Quick check that doesn't read from disk
         let contextual = ContextuallyValidBlock::with_block_and_spent_utxos(
-            new_chain.network(),
+            self.network,
             prepared.clone(),
             last_block_time,
-            spent_utxos.clone(),
+            spent_utxos.clone(),    // TODO: check, this is mutable
         )
         .map_err(|value_balance_error| {
             ValidateContextError::CalculateBlockChainValueChange {
@@ -266,17 +280,17 @@ impl NonFinalizedState {
             }
         })?;
 
-        let spent_outputs = outputs_from_utxos(utxos_from_ordered_utxos(spent_utxos));
+        let new_chain = Self::validate_and_update_parallel(new_chain, contextual, sprout_final_treestates)?;
 
-        let result = Self::validate_and_update_parallel(new_chain, contextual, sprout_final_treestates);
+        let utxos = utxos_from_ordered_utxos(spent_utxos);
+        let outputs = outputs_from_utxos(utxos);
 
         // komodo checks related to notarisation:
-        if let Ok(new_chain) = result.as_ref()   {
-            self.komodo_checkpoint(&prepared)?;     // prevent new blocks to be added from below last notarised height
-            self.komodo_check_fork_is_valid(new_chain)?;    // prevent existing branches without nota to grow 
-            self.komodo_find_block_nota_and_update_last(&prepared.block, &spent_outputs, &prepared.height); // try to find nota in the new block and set it as the latest nota
-        }
-        result
+        self.komodo_checkpoint(&prepared)?;     // prevent new blocks to be added from below last notarised height
+        self.komodo_check_fork_is_valid(&new_chain)?;    // prevent existing branches without nota to grow 
+        self.komodo_find_block_nota_and_update_last(&prepared.block, &outputs, &prepared.height); // try to find nota in the new block and set it as the latest nota
+
+        Ok(new_chain)
     }
 
     /// Validate `contextual` and update `new_chain`, doing CPU-intensive work in parallel batches.
@@ -294,7 +308,8 @@ impl NonFinalizedState {
         // Clone function arguments for different threads
         let block = contextual.block.clone();
         let network = new_chain.network();
-        let history_tree = new_chain.history_tree.clone();
+        let history_tree = new_chain.history_block_commitment_tree();
+        let sapling_root = new_chain.sapling_note_commitment_tree().root();
 
         let block2 = contextual.block.clone();
         let height = contextual.height;
@@ -306,16 +321,18 @@ impl NonFinalizedState {
                     block,
                     network,
                     &history_tree,
+                    &sapling_root,
                 ));
             });
 
             scope.spawn_fifo(|_scope| {
-                sprout_anchor_result = Some(check::anchors::sprout_anchors_refer_to_treestates(
-                    sprout_final_treestates,
-                    block2,
-                    height,
-                    transaction_hashes,
-                ));
+                sprout_anchor_result =
+                    Some(check::anchors::block_sprout_anchors_refer_to_treestates(
+                        sprout_final_treestates,
+                        block2,
+                        transaction_hashes,
+                        height,
+                    ));
             });
 
             // We're pretty sure the new block is valid,
@@ -347,6 +364,7 @@ impl NonFinalizedState {
 
     /// Returns `true` if `hash` is contained in the non-finalized portion of any
     /// known chain.
+    #[allow(dead_code)]
     pub fn any_chain_contains(&self, hash: &block::Hash) -> bool {
         self.chain_set
             .iter()
@@ -368,14 +386,13 @@ impl NonFinalizedState {
 
     /// Returns the [`transparent::Utxo`] pointed to by the given
     /// [`transparent::OutPoint`] if it is present in any chain.
+    ///
+    /// UTXOs are returned regardless of whether they have been spent.
     pub fn any_utxo(&self, outpoint: &transparent::OutPoint) -> Option<transparent::Utxo> {
-        for chain in self.chain_set.iter().rev() {
-            if let Some(utxo) = chain.created_utxos.get(outpoint) {
-                return Some(utxo.utxo.clone());
-            }
-        }
-
-        None
+        self.chain_set
+            .iter()
+            .rev()
+            .find_map(|chain| chain.created_utxo(outpoint))
     }
 
     /// Returns the `block` with the given hash in any chain.
@@ -394,6 +411,7 @@ impl NonFinalizedState {
     }
 
     /// Returns the hash for a given `block::Height` if it is present in the best chain.
+    #[allow(dead_code)]
     pub fn best_hash(&self, height: block::Height) -> Option<block::Hash> {
         self.best_chain()?
             .blocks
@@ -402,6 +420,7 @@ impl NonFinalizedState {
     }
 
     /// Returns the tip of the best chain.
+    #[allow(dead_code)]
     pub fn best_tip(&self) -> Option<(block::Height, block::Hash)> {
         let best_chain = self.best_chain()?;
         let height = best_chain.non_finalized_tip_height();
@@ -419,6 +438,7 @@ impl NonFinalizedState {
     }
 
     /// Returns the height of `hash` in the best chain.
+    #[allow(dead_code)]
     pub fn best_height_by_hash(&self, hash: block::Hash) -> Option<block::Height> {
         let best_chain = self.best_chain()?;
         let height = *best_chain.height_by_hash.get(&hash)?;
@@ -446,7 +466,10 @@ impl NonFinalizedState {
 
     /// Returns `true` if the best chain contains `sapling_nullifier`.
     #[cfg(test)]
-    pub fn best_contains_sapling_nullifier(&self, sapling_nullifier: &sapling::Nullifier) -> bool {
+    pub fn best_contains_sapling_nullifier(
+        &self,
+        sapling_nullifier: &zebra_chain::sapling::Nullifier,
+    ) -> bool {
         self.best_chain()
             .map(|best_chain| best_chain.sapling_nullifiers.contains(sapling_nullifier))
             .unwrap_or(false)
@@ -454,7 +477,10 @@ impl NonFinalizedState {
 
     /// Returns `true` if the best chain contains `orchard_nullifier`.
     #[cfg(test)]
-    pub fn best_contains_orchard_nullifier(&self, orchard_nullifier: &orchard::Nullifier) -> bool {
+    pub fn best_contains_orchard_nullifier(
+        &self,
+        orchard_nullifier: &zebra_chain::orchard::Nullifier,
+    ) -> bool {
         self.best_chain()
             .map(|best_chain| best_chain.orchard_nullifiers.contains(orchard_nullifier))
             .unwrap_or(false)
@@ -487,19 +513,12 @@ impl NonFinalizedState {
 
     /// Return the chain whose tip block hash is `parent_hash`.
     ///
-    /// The chain can be an existing chain in the non-finalized state or a freshly
-    /// created fork, if needed.
-    ///
-    /// The trees must be the trees of the finalized tip.
-    /// They are used to recreate the trees if a fork is needed.
+    /// The chain can be an existing chain in the non-finalized state, or a freshly
+    /// created fork.
     #[allow(clippy::unwrap_in_result)]
     fn parent_chain(
         &mut self,
         parent_hash: block::Hash,
-        sprout_note_commitment_tree: Arc<sprout::tree::NoteCommitmentTree>,
-        sapling_note_commitment_tree: Arc<sapling::tree::NoteCommitmentTree>,
-        orchard_note_commitment_tree: Arc<orchard::tree::NoteCommitmentTree>,
-        history_tree: Arc<HistoryTree>,
     ) -> Result<Arc<Chain>, ValidateContextError> {
         match self.find_chain(|chain| chain.non_finalized_tip_hash() == parent_hash) {
             // Clone the existing Arc<Chain> in the non-finalized state
@@ -511,20 +530,8 @@ impl NonFinalizedState {
                 let fork_chain = self
                     .chain_set
                     .iter()
-                    .find_map(|chain| {
-                        chain
-                            .fork(
-                                parent_hash,
-                                sprout_note_commitment_tree.clone(),
-                                sapling_note_commitment_tree.clone(),
-                                orchard_note_commitment_tree.clone(),
-                                history_tree.clone(),
-                            )
-                            .transpose()
-                    })
-                    .expect(
-                        "commit_block is only called with blocks that are ready to be committed",
-                    )?;
+                    .find_map(|chain| chain.fork(parent_hash))
+                    .ok_or(ValidateContextError::NotReadyToBeCommitted)?;
 
                 Ok(Arc::new(fork_chain))
             }
@@ -533,6 +540,11 @@ impl NonFinalizedState {
 
     /// Update the metrics after `block` is committed
     fn update_metrics_for_committed_block(&self, height: block::Height, hash: block::Hash) {
+        #[cfg(feature = "getblocktemplate-rpcs")]
+        if !self.should_count_metrics {
+            return;
+        }
+
         metrics::counter!("state.memory.committed.block.count", 1);
         metrics::gauge!("state.memory.committed.block.height", height.0 as f64);
 
@@ -556,6 +568,11 @@ impl NonFinalizedState {
 
     /// Update the metrics after `self.chain_set` is modified
     fn update_metrics_for_chains(&self) {
+        #[cfg(feature = "getblocktemplate-rpcs")]
+        if !self.should_count_metrics {
+            return;
+        }
+
         metrics::gauge!("state.memory.chain.count", self.chain_set.len() as f64);
         metrics::gauge!(
             "state.memory.best.chain.length",
@@ -606,32 +623,7 @@ impl NonFinalizedState {
                         trace!("komodo_check_fork_is_valid block_hashes_truncated={:?}", block_hashes_truncated);
 
                         let new_has_nota = block_hashes_truncated.iter().find(|pair| pair.1 == last_nota.notarised_block_hash).is_some();
-                        
-                        /*
-                        // suggested new algo change:
-                        // if the new chain has the last nota but the best chain does not 
-                        // then mark the best chain as bad and allow the new block to add
-                        if new_has_nota {
-
-                            if best_chain.blocks.iter()
-                                .skip_while(|e| e.1 != fork.1)
-                                .skip(1)
-                                .find(|pair| pair.1.hash == last_nota.notarised_block_hash).is_some()    {
-                                info!("best chain does not contain nota, marking it as bad");
-
-                                let modified_chain = Arc::try_unwrap(new_chain)
-                                    .unwrap_or_else(|shared_chain| (*shared_chain).clone());
-                                modified_chain.set_as_bad();  
-                                self.chain_set
-                                    .retain(|chain| chain.non_finalized_tip_hash() != parent_hash);
-                                self.chain_set.insert(modified_chain);
-                                ...
-                                return Ok(());
-                            }
-                        }
-                        */
-
-
+                    
                         debug!(
                             chain_with_new_block_non_fin_height = chain_with_new_block.non_finalized_tip_height().0,
                             best_chain_non_fin_height = best_chain.non_finalized_tip_height().0,

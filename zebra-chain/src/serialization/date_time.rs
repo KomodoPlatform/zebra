@@ -3,16 +3,17 @@
 use std::{
     convert::{TryFrom, TryInto},
     fmt,
-    num::TryFromIntError,
+    num::{TryFromIntError, ParseIntError},
+    str::FromStr,
 };
-
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use chrono::{TimeZone, Utc};
 
 use super::{SerializationError, ZcashDeserialize, ZcashSerialize};
 
 /// A date and time, represented by a 32-bit number of seconds since the UNIX epoch.
-#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct DateTime32 {
     timestamp: u32,
 }
@@ -235,6 +236,16 @@ impl From<DateTime32> for chrono::DateTime<Utc> {
 impl From<&DateTime32> for chrono::DateTime<Utc> {
     fn from(value: &DateTime32) -> Self {
         (*value).into()
+    }
+}
+
+impl FromStr for DateTime32 {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(DateTime32 {
+            timestamp: s.parse()?,
+        })
     }
 }
 

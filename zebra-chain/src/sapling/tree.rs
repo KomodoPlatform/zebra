@@ -17,7 +17,7 @@ use std::{
     ops::Deref,
     sync::Arc,
 };
-
+use hex::{FromHex, ToHex};
 use bitvec::prelude::*;
 
 use incrementalmerkletree::{
@@ -32,9 +32,9 @@ use zcash_primitives::merkle_tree::{self, Hashable};
 
 use super::commitment::pedersen_hashes::pedersen_hash;
 
-use crate::serialization::{
+use crate::{serialization::{
     serde_helpers, ReadZcashExt, SerializationError, ZcashDeserialize, ZcashSerialize,
-};
+}, BoxError};
 
 /// The type that is used to update the note commitment tree.
 ///
@@ -103,6 +103,29 @@ pub struct Position(pub(crate) u64);
 #[derive(Clone, Copy, Default, Eq, Serialize, Deserialize)]
 pub struct Root(#[serde(with = "serde_helpers::Fq")] pub(crate) jubjub::Base);
 
+impl Root {
+    /// Return the hash bytes in big-endian byte-order suitable for printing out byte by byte (added by Komodo).
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn bytes_in_display_order(&self) -> [u8; 32] {
+        let mut reversed_bytes = self.0.to_bytes();
+        reversed_bytes.reverse();
+        reversed_bytes
+    }
+
+    /// Convert bytes in big-endian byte-order into a Root (added by Komodo).
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn from_bytes_in_display_order(bytes_in_display_order: &[u8; 32]) -> Result<Root, BoxError> {
+        let mut internal_byte_order = *bytes_in_display_order;
+        internal_byte_order.reverse();
+
+        TryFrom::<[u8; 32]>::try_from(internal_byte_order).map_err(Into::into)
+    }
+}
+
 impl fmt::Debug for Root {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_tuple("Root")
@@ -148,6 +171,44 @@ impl TryFrom<[u8; 32]> for Root {
                 "Invalid jubjub::Base value for Sapling note commitment tree root",
             ))
         }
+    }
+}
+
+/// Added by Komodo for serializing final sapling root
+impl ToHex for &Root {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+/// Added by Komodo for serializing final sapling root
+impl ToHex for Root {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+/// Added by Komodo for serializing final sapling root
+impl FromHex for Root {
+    type Error = SerializationError;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let mut bytes = match <[u8; 32]>::from_hex(hex) {
+            Ok(result) => result,
+            Err(_) => return Err(SerializationError::Parse(
+                "hex parse",
+            ))
+        };
+        bytes.reverse();
+        TryFrom::<[u8; 32]>::try_from(bytes)
     }
 }
 

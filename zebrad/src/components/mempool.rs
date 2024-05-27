@@ -417,6 +417,18 @@ impl Service<Request> for Mempool {
                     let res = storage.transactions_exact(ids).cloned().collect();
                     async move { Ok(Response::Transactions(res)) }.boxed()
                 }
+
+                #[cfg(feature = "getblocktemplate-rpcs")]
+                Request::FullTransactions => {
+                    trace!(?req, "got mempool request");
+
+                    let res: Vec<_> = storage.full_transactions().cloned().collect();
+
+                    trace!(?req, res_count = ?res.len(), "answered mempool request");
+
+                    async move { Ok(Response::FullTransactions(res)) }.boxed()
+                }
+
                 Request::TransactionsByMinedId(ids) => {
                     let res = storage.transactions_same_effects(ids).cloned().collect();
                     async move { Ok(Response::Transactions(res)) }.boxed()
@@ -455,6 +467,9 @@ impl Service<Request> for Mempool {
                     Request::TransactionIds => Response::TransactionIds(Default::default()),
                     Request::TransactionsById(_) => Response::Transactions(Default::default()),
                     Request::TransactionsByMinedId(_) => Response::Transactions(Default::default()),
+                    #[cfg(feature = "getblocktemplate-rpcs")]
+                    Request::FullTransactions => Response::FullTransactions(Default::default()),
+                    
                     Request::RejectedTransactionIds(_) => {
                         Response::RejectedTransactionIds(Default::default())
                     }

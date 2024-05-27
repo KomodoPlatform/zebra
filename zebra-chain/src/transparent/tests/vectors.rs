@@ -47,7 +47,7 @@ fn parse_coinbase_height_mins() {
     assert!(parse_coinbase_height(case4).is_err());
 }
 
-#[ignore]  // fix for Komodo address
+#[ignore = "fix for komodo address"]  // fix for Komodo address
 #[test]
 fn get_transparent_output_address() -> Result<()> {
     zebra_test::init();

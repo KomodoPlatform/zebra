@@ -8,5 +8,6 @@ pub mod config;
 pub mod methods;
 pub mod queue;
 pub mod server;
+pub mod constants;
 #[cfg(test)]
 mod tests;

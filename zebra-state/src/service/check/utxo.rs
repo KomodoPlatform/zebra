@@ -203,7 +203,7 @@ pub fn transparent_coinbase_spend(
     }
 
     let min_spend_height =
-                utxo.utxo.height + block::Height(komodo_get_min_coinbase_maturity(network));
+                utxo.utxo.height + komodo_get_min_coinbase_maturity(network).try_into().unwrap();
     let min_spend_height =
         min_spend_height.expect("valid UTXOs have coinbase heights far below Height::MAX");
 

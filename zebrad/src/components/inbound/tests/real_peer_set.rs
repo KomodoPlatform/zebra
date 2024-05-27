@@ -13,7 +13,7 @@ use tower::{
 };
 
 use zebra_chain::{
-    block::{self, Block},
+    block::{self, Block, Height},
     parameters::Network,
     serialization::ZcashDeserializeInto,
     transaction::{AuthDigest, Hash as TxHash, Transaction, UnminedTx, UnminedTxId, WtxId},
@@ -621,7 +621,7 @@ async fn setup(
     Buffer<BoxService<mempool::Request, mempool::Response, BoxError>, mempool::Request>,
     Buffer<BoxService<zebra_state::Request, zebra_state::Response, BoxError>, zebra_state::Request>,
     // mocked services
-    MockService<Arc<Block>, block::Hash, PanicAssertion, VerifyChainError>,
+    MockService<zebra_consensus::Request, block::Hash, PanicAssertion, VerifyChainError>,
     MockService<transaction::Request, transaction::Response, PanicAssertion, TransactionError>,
     // real tasks
     JoinHandle<Result<(), BlockGossipError>>,
@@ -647,7 +647,7 @@ async fn setup(
     // State
     let state_config = StateConfig::ephemeral();
     let (state_service, _read_only_state_service, latest_chain_tip, chain_tip_change) =
-        zebra_state::init(state_config, network);
+        zebra_state::init(state_config, network, Height::MAX, 0);
     let state_service = ServiceBuilder::new().buffer(10).service(state_service);
 
     // Network
@@ -661,7 +661,7 @@ async fn setup(
 
         ..NetworkConfig::default()
     };
-    let (mut peer_set, address_book, _inbound_conns) = zebra_network::init(
+    let (mut peer_set, address_book, _peer_stats) = zebra_network::init(
         network_config,
         inbound_service.clone(),
         latest_chain_tip.clone(),

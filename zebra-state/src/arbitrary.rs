@@ -62,6 +62,7 @@ impl From<PreparedBlock> for ChainTipBlock {
             height,
             time: block.header.time,
             transaction_hashes,
+            transactions: block.transactions.clone(),
             previous_block_hash: block.header.previous_block_hash,
             mtp: -1,
         }

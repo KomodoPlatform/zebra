@@ -28,19 +28,18 @@ use crate::{parameters::SLOW_START_SHIFT, transaction};
 
 use super::*;
 
-static VALID_BLOCK_TRANSCRIPT: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
-> = Lazy::new(|| {
-    let block: Arc<_> =
-        Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..])
-            .unwrap()
-            .into();
-    let hash = Ok(block.as_ref().into());
-    vec![(block, hash)]
-});
+static VALID_BLOCK_TRANSCRIPT: Lazy<Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>> =
+    Lazy::new(|| {
+        let block: Arc<_> =
+            Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..])
+                .unwrap()
+                .into();
+        let hash = Ok(block.as_ref().into());
+        vec![(Request::Commit(block), hash)]
+    });
 
 static INVALID_TIME_BLOCK_TRANSCRIPT: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
+    Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>,
 > = Lazy::new(|| {
     let mut block: Block =
         Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..]).unwrap();
@@ -55,23 +54,29 @@ static INVALID_TIME_BLOCK_TRANSCRIPT: Lazy<
         .unwrap();
     Arc::make_mut(&mut block.header).time = three_hours_in_the_future;
 
-    vec![(Arc::new(block), Err(ExpectedTranscriptError::Any))]
+    vec![(
+        Request::Commit(Arc::new(block)),
+        Err(ExpectedTranscriptError::Any),
+    )]
 });
 
 static INVALID_HEADER_SOLUTION_TRANSCRIPT: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
+    Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>,
 > = Lazy::new(|| {
     let mut block: Block =
         Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..]).unwrap();
 
     // Change nonce to something invalid
-    Arc::make_mut(&mut block.header).nonce = [0; 32];
+    Arc::make_mut(&mut block.header).nonce = [0; 32].into();
 
-    vec![(Arc::new(block), Err(ExpectedTranscriptError::Any))]
+    vec![(
+        Request::Commit(Arc::new(block)),
+        Err(ExpectedTranscriptError::Any),
+    )]
 });
 
 static INVALID_COINBASE_TRANSCRIPT: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
+    Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>,
 > = Lazy::new(|| {
     let header = block::Header::zcash_deserialize(&zebra_test::vectors::DUMMY_HEADER[..]).unwrap();
 
@@ -105,9 +110,18 @@ static INVALID_COINBASE_TRANSCRIPT: Lazy<
     assert_eq!(block3.transactions.len(), 2);
 
     vec![
-        (Arc::new(block1), Err(ExpectedTranscriptError::Any)),
-        (Arc::new(block2), Err(ExpectedTranscriptError::Any)),
-        (Arc::new(block3), Err(ExpectedTranscriptError::Any)),
+        (
+            Request::Commit(Arc::new(block1)),
+            Err(ExpectedTranscriptError::Any),
+        ),
+        (
+            Request::Commit(Arc::new(block2)),
+            Err(ExpectedTranscriptError::Any),
+        ),
+        (
+            Request::Commit(Arc::new(block3)),
+            Err(ExpectedTranscriptError::Any),
+        ),
     ]
 });
 
@@ -305,7 +319,7 @@ fn equihash_is_valid_for_historical_blocks() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // Subsidy is different in Komodo
+#[ignore = "Subsidy is different in Komodo"] // Subsidy is different in Komodo
 #[test]
 fn subsidy_is_valid_for_historical_blocks() -> Result<(), Report> {
     zebra_test::init();
@@ -340,7 +354,7 @@ fn subsidy_is_valid_for_network(network: Network) -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[test]
 fn coinbase_validation_failure() -> Result<(), Report> {
     zebra_test::init();
@@ -412,7 +426,7 @@ fn coinbase_validation_failure() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // TODO fix for Komodo
+#[ignore = "fix for Komodo"] // TODO fix for Komodo
 #[test]
 fn funding_stream_validation() -> Result<(), Report> {
     zebra_test::init();
@@ -446,7 +460,7 @@ fn funding_stream_validation_for_network(network: Network) -> Result<(), Report>
     Ok(())
 }
 
-#[ignore] // TODO fix for Komodo
+#[ignore = "fix for Komodo"] // TODO fix for Komodo
 #[test]
 fn funding_stream_validation_failure() -> Result<(), Report> {
     zebra_test::init();
@@ -577,7 +591,7 @@ fn time_is_valid_for_historical_blocks() -> Result<(), Report> {
 }
 
 
-#[ignore] // TODO fix for Komodo
+#[ignore = "fix for Komodo"] // TODO fix for Komodo
 #[test]
 fn merkle_root_is_valid() -> Result<(), Report> {
     zebra_test::init();

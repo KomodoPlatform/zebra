@@ -1,6 +1,9 @@
 //! The Commitment enum, used for the corresponding block header field.
 
+use std::fmt;
+
 use thiserror::Error;
+use hex::{ToHex, FromHex};
 
 use crate::{
     block::{self, merkle::AuthDataRoot},
@@ -144,8 +147,22 @@ impl Commitment {
 //    - add methods for maintaining the MMR peaks, and calculating the root
 //      hash from the current set of peaks
 //    - move to a separate file
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ChainHistoryMmrRootHash([u8; 32]);
+
+impl fmt::Display for ChainHistoryMmrRootHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.encode_hex::<String>())
+    }
+}
+
+impl fmt::Debug for ChainHistoryMmrRootHash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("ChainHistoryMmrRootHash")
+            .field(&self.encode_hex::<String>())
+            .finish()
+    }
+}
 
 impl From<[u8; 32]> for ChainHistoryMmrRootHash {
     fn from(hash: [u8; 32]) -> Self {
@@ -156,6 +173,67 @@ impl From<[u8; 32]> for ChainHistoryMmrRootHash {
 impl From<ChainHistoryMmrRootHash> for [u8; 32] {
     fn from(hash: ChainHistoryMmrRootHash) -> Self {
         hash.0
+    }
+}
+
+impl ChainHistoryMmrRootHash {
+    /// Return the hash bytes in big-endian byte-order suitable for printing out byte by byte.
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn bytes_in_display_order(&self) -> [u8; 32] {
+        let mut reversed_bytes = self.0;
+        reversed_bytes.reverse();
+        reversed_bytes
+    }
+
+    /// Convert bytes in big-endian byte-order into a `ChainHistoryMmrRootHash`.
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn from_bytes_in_display_order(
+        bytes_in_display_order: &[u8; 32],
+    ) -> ChainHistoryMmrRootHash {
+        let mut internal_byte_order = *bytes_in_display_order;
+        internal_byte_order.reverse();
+
+        ChainHistoryMmrRootHash(internal_byte_order)
+    }
+
+    /// Returns the serialized bytes for this Commitment.
+    pub fn bytes_in_serialized_order(&self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl ToHex for &ChainHistoryMmrRootHash {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+impl ToHex for ChainHistoryMmrRootHash {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+impl FromHex for ChainHistoryMmrRootHash {
+    type Error = <[u8; 32] as FromHex>::Error;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let mut hash = <[u8; 32]>::from_hex(hex)?;
+        hash.reverse();
+
+        Ok(hash.into())
     }
 }
 
@@ -211,6 +289,65 @@ impl ChainHistoryBlockTxAuthCommitmentHash {
             .try_into()
             .expect("32 byte array");
         Self(hash_block_commitments)
+    }
+
+    /// Return the hash bytes in big-endian byte-order suitable for printing out byte by byte.
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn bytes_in_display_order(&self) -> [u8; 32] {
+        let mut reversed_bytes = self.0;
+        reversed_bytes.reverse();
+        reversed_bytes
+    }
+
+    /// Convert bytes in big-endian byte-order into a `ChainHistoryBlockTxAuthCommitmentHash`.
+    ///
+    /// Zebra displays transaction and block hashes in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn from_bytes_in_display_order(
+        bytes_in_display_order: &[u8; 32],
+    ) -> ChainHistoryBlockTxAuthCommitmentHash {
+        let mut internal_byte_order = *bytes_in_display_order;
+        internal_byte_order.reverse();
+
+        ChainHistoryBlockTxAuthCommitmentHash(internal_byte_order)
+    }
+
+    /// Returns the serialized bytes for this Commitment.
+    pub fn bytes_in_serialized_order(&self) -> [u8; 32] {
+        self.0
+    }
+}
+
+impl ToHex for &ChainHistoryBlockTxAuthCommitmentHash {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+impl ToHex for ChainHistoryBlockTxAuthCommitmentHash {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+impl FromHex for ChainHistoryBlockTxAuthCommitmentHash {
+    type Error = <[u8; 32] as FromHex>::Error;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let mut hash = <[u8; 32]>::from_hex(hex)?;
+        hash.reverse();
+
+        Ok(hash.into())
     }
 }
 

@@ -1,7 +1,13 @@
 //! The `AddressBook` manages information about what peers exist, when they were
 //! seen, and what services they provide.
 
-use std::{cmp::Reverse, iter::Extend, net::SocketAddr, time::Instant};
+use std::{
+    cmp::Reverse,
+    iter::Extend,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use chrono::Utc;
 use ordered_map::OrderedMap;
@@ -12,7 +18,7 @@ use zebra_chain::parameters::Network;
 
 use crate::{
     constants, meta_addr::MetaAddrChange, protocol::external::canonical_socket_addr,
-    types::MetaAddr, PeerAddrState,
+    types::MetaAddr, AddressBookPeers, PeerAddrState,
 };
 
 #[cfg(test)]
@@ -288,7 +294,7 @@ impl AddressBook {
             ?updated,
             ?previous,
             total_peers = self.by_addr.len(),
-            recent_peers = self.recently_live_peers(chrono_now).count(),
+            recent_peers = self.recently_live_peers(chrono_now).len(),
             "calculated updated address book entry",
         );
 
@@ -317,7 +323,7 @@ impl AddressBook {
                 ?updated,
                 ?previous,
                 total_peers = self.by_addr.len(),
-                recent_peers = self.recently_live_peers(chrono_now).count(),
+                recent_peers = self.recently_live_peers(chrono_now).len(),
                 "updated address book entry",
             );
 
@@ -340,7 +346,7 @@ impl AddressBook {
                     surplus = ?surplus_peer,
                     ?updated,
                     total_peers = self.by_addr.len(),
-                    recent_peers = self.recently_live_peers(chrono_now).count(),
+                    recent_peers = self.recently_live_peers(chrono_now).len(),
                     "removed surplus address book entry",
                 );
             }
@@ -370,7 +376,7 @@ impl AddressBook {
         trace!(
             ?removed_addr,
             total_peers = self.by_addr.len(),
-            recent_peers = self.recently_live_peers(chrono_now).count(),
+            recent_peers = self.recently_live_peers(chrono_now).len(),
         );
 
         if let Some(entry) = self.by_addr.remove(&removed_addr) {
@@ -452,20 +458,6 @@ impl AddressBook {
             .cloned()
     }
 
-    /// Return an iterator over peers we've seen recently,
-    /// in reconnection attempt order.
-    pub fn recently_live_peers(
-        &'_ self,
-        now: chrono::DateTime<Utc>,
-    ) -> impl Iterator<Item = MetaAddr> + DoubleEndedIterator + '_ {
-        let _guard = self.span.enter();
-
-        self.by_addr
-            .descending_values()
-            .filter(move |peer| peer.was_recently_live(now))
-            .cloned()
-    }
-
     /// Returns the number of entries in this address book.
     pub fn len(&self) -> usize {
         self.by_addr.len()
@@ -501,7 +493,7 @@ impl AddressBook {
         let failed = self.state_peers(PeerAddrState::Failed).count();
         let attempt_pending = self.state_peers(PeerAddrState::AttemptPending).count();
 
-        let recently_live = self.recently_live_peers(now).count();
+        let recently_live = self.recently_live_peers(now).len();
         let recently_stopped_responding = responded
             .checked_sub(recently_live)
             .expect("all recently live peers must have responded");
@@ -604,6 +596,26 @@ impl AddressBook {
     }
 }
 
+impl AddressBookPeers for AddressBook {
+    fn recently_live_peers(&self, now: chrono::DateTime<Utc>) -> Vec<MetaAddr> {
+        let _guard = self.span.enter();
+
+        self.by_addr
+            .descending_values()
+            .filter(|peer| peer.was_recently_live(now))
+            .cloned()
+            .collect()
+    }
+}
+
+impl AddressBookPeers for Arc<Mutex<AddressBook>> {
+    fn recently_live_peers(&self, now: chrono::DateTime<Utc>) -> Vec<MetaAddr> {
+        self.lock()
+            .expect("panic in a previous thread that was holding the mutex")
+            .recently_live_peers(now)
+    }
+}
+
 impl Extend<MetaAddrChange> for AddressBook {
     fn extend<T>(&mut self, iter: T)
     where
@@ -635,105 +647,6 @@ impl Clone for AddressBook {
             span: self.span.clone(),
             address_metrics_tx,
             last_address_log: None,
-        }
-    }
-}
-
-/// Inbound connection list
-#[derive(Debug)]
-pub struct InboundConns {
-    /// Connected peer inbound addresses,
-    by_addr: OrderedMap<SocketAddr, MetaAddr, Reverse<MetaAddr>>,
-
-    /// The configured Zcash network.
-    network: Network,
-}
-
-impl InboundConns {
-    /// create inbound connection list object
-    pub fn new(network: Network) -> InboundConns {
-        let new_list = InboundConns {
-            by_addr: OrderedMap::new(|meta_addr| Reverse(*meta_addr)),
-            network,
-        };
-
-        new_list
-    }
-
-    /// update inbound conns with change
-    #[allow(clippy::unwrap_in_result)]
-    pub fn update(&mut self, change: MetaAddrChange) -> Option<MetaAddr> {
-        let previous = self.get(&change.addr());
-
-        //let instant_now = Instant::now();
-        //let chrono_now = Utc::now();
-
-        let updated = change.apply_to_meta_addr(previous);
-
-        trace!(
-            ?change,
-            ?updated,
-            ?previous,
-            total_peers = self.by_addr.len(),
-            "calculated updated inbound conns entry",
-        );
-
-        if let Some(updated) = updated {
-            // Ignore outbound addresses.
-            if updated.address_is_valid_for_outbound(self.network) {
-                return None;
-            }
-
-            self.by_addr.insert(updated.addr, updated);
-
-            debug!(
-                ?change,
-                ?updated,
-                ?previous,
-                total_peers = self.by_addr.len(),
-                "updated inbound conns entry",
-            );
-        }
-
-        updated
-    }
-
-    /// Look up `addr` in the inbound conns, and return its [`MetaAddr`].
-    ///
-    /// Converts `addr` to a canonical address before looking it up.
-    pub fn get(&mut self, addr: &SocketAddr) -> Option<MetaAddr> {
-        let addr = canonical_socket_addr(*addr);
-
-        // Unfortunately, `OrderedMap` doesn't implement `get`.
-        let meta_addr = self.by_addr.remove(&addr);
-
-        if let Some(meta_addr) = meta_addr {
-            self.by_addr.insert(addr, meta_addr);
-        }
-
-        meta_addr
-    }
-
-    /// Return an iterator over all peers.
-    ///
-    /// Returns peers in connected order.
-    pub fn peers(&'_ self) -> impl Iterator<Item = MetaAddr> + DoubleEndedIterator + '_ {
-        self.by_addr.descending_values().cloned()
-    }
-
-}
-
-impl Clone for InboundConns {
-    /// Clone the addresses, address limit, local listener address, and span.
-    ///
-    /// Cloned address books have a separate metrics struct watch channel, and an empty last address log.
-    ///
-    /// All address books update the same prometheus metrics.
-    fn clone(&self) -> InboundConns {
-
-        InboundConns {
-            by_addr: self.by_addr.clone(),
-            network: self.network,
         }
     }
 }

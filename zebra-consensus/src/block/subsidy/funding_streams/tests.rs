@@ -2,7 +2,7 @@ use super::*;
 use color_eyre::Report;
 use std::convert::TryFrom;
 
-#[ignore]  // Values are different in Komodo. TODO: add this test for KMD
+#[ignore = "fix for Komodo"]  // Values are different in Komodo. TODO: add this test for KMD
 #[test]
 // Check funding streams are correct in the entire period.
 fn test_funding_stream_values() -> Result<(), Report> {

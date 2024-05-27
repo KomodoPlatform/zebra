@@ -59,6 +59,14 @@ impl VerifiedSet {
         self.transactions.iter().map(|tx| &tx.transaction)
     }
 
+    /// Returns an iterator over the [`VerifiedUnminedTx`] in the set.
+    ///
+    /// Each [`VerifiedUnminedTx`] contains an [`UnminedTx`],
+    /// and adds extra fields from the transaction verifier result.
+    pub fn full_transactions(&self) -> impl Iterator<Item = &VerifiedUnminedTx> + '_ {
+        self.transactions.iter()
+    }
+
     /// Returns the number of verified transactions in the set.
     pub fn transaction_count(&self) -> usize {
         self.transactions.len()

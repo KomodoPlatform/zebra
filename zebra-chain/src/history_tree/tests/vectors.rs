@@ -23,7 +23,7 @@ use zebra_test::vectors::{
 /// This test is very similar to the zcash_history test in
 /// zebra-chain/src/primitives/zcash_history/tests/vectors.rs, but with the
 /// higher level API.
-#[ignore]  // TODO fix or add another test for Komodo blocks
+#[ignore = "fix for komodo blocks"]  // TODO fix or add another test for Komodo blocks
 #[test]
 fn push_and_prune() -> Result<()> {
     push_and_prune_for_network_upgrade(Network::Mainnet, NetworkUpgrade::Heartwood)?;
@@ -111,7 +111,7 @@ fn push_and_prune_for_network_upgrade(
 
 /// Test the history tree works during a network upgrade using the block
 /// of a network upgrade and the previous block from the previous upgrade.
-#[ignore]  // TODO fix or add another test for Komodo blocks
+#[ignore = "fix for komodo blocks"]  // TODO fix or add another test for Komodo blocks
 #[test]
 fn upgrade() -> Result<()> {
     // The history tree only exists Hearwood-onward, and the only upgrade for which

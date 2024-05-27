@@ -14,6 +14,8 @@ use zebra_chain::{
     transaction,
     transparent::{self, utxos_from_ordered_utxos},
     value_balance::{ValueBalance, ValueBalanceError}, parameters::Network,
+    parallel::tree::NoteCommitmentTrees,
+    history_tree::HistoryTree, sapling, orchard, sprout,
 };
 
 /// Allow *only* this unused import, so that rustdoc link resolution
@@ -45,6 +47,24 @@ impl HashOrHeight {
             HashOrHeight::Height(height) => Some(height),
         }
     }
+
+    /// Returns the hash if this is a [`HashOrHeight::Hash`].
+    pub fn hash(&self) -> Option<block::Hash> {
+        if let HashOrHeight::Hash(hash) = self {
+            Some(*hash)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the height if this is a [`HashOrHeight::Height`].
+    pub fn height(&self) -> Option<block::Height> {
+        if let HashOrHeight::Height(height) = self {
+            Some(*height)
+        } else {
+            None
+        }
+    }
 }
 
 impl From<block::Hash> for HashOrHeight {
@@ -56,6 +76,19 @@ impl From<block::Hash> for HashOrHeight {
 impl From<block::Height> for HashOrHeight {
     fn from(hash: block::Height) -> Self {
         Self::Height(hash)
+    }
+}
+
+impl From<(block::Height, block::Hash)> for HashOrHeight {
+    fn from((_height, hash): (block::Height, block::Hash)) -> Self {
+        // Hash is more specific than height for the non-finalized state
+        hash.into()
+    }
+}
+
+impl From<(block::Hash, block::Height)> for HashOrHeight {
+    fn from((hash, _height): (block::Hash, block::Height)) -> Self {
+        hash.into()
     }
 }
 
@@ -178,12 +211,6 @@ pub struct FinalizedBlock {
     pub transaction_hashes: Arc<[transaction::Hash]>,
 }
 
-impl From<&PreparedBlock> for PreparedBlock {
-    fn from(prepared: &PreparedBlock) -> Self {
-        prepared.clone()
-    }
-}
-
 // Doing precomputation in these impls means that it will be done in
 // the *service caller*'s task, not inside the service call itself.
 // This allows moving work out of the single-threaded state service.
@@ -281,6 +308,78 @@ impl From<ContextuallyValidBlock> for FinalizedBlock {
             new_outputs: utxos_from_ordered_utxos(new_outputs),
             transaction_hashes,
         }
+    }
+}
+
+/// Wraps note commitment trees and the history tree together.
+pub struct Treestate {
+    /// Note commitment trees.
+    pub note_commitment_trees: NoteCommitmentTrees,
+    /// History tree.
+    pub history_tree: Arc<HistoryTree>,
+}
+
+impl Treestate {
+    pub fn new(
+        sprout: Arc<sprout::tree::NoteCommitmentTree>,
+        sapling: Arc<sapling::tree::NoteCommitmentTree>,
+        orchard: Arc<orchard::tree::NoteCommitmentTree>,
+        history_tree: Arc<HistoryTree>,
+    ) -> Self {
+        Self {
+            note_commitment_trees: NoteCommitmentTrees {
+                sprout,
+                sapling,
+                orchard,
+            },
+            history_tree,
+        }
+    }
+}
+
+/// Contains a block ready to be committed together with its associated
+/// treestate.
+///
+/// Zebra's non-finalized state passes this `struct` over to the finalized state
+/// when committing a block. The associated treestate is passed so that the
+/// finalized state does not have to retrieve the previous treestate from the
+/// database and recompute the new one.
+pub struct FinalizedWithTrees {
+    /// A block ready to be committed.
+    pub finalized: FinalizedBlock,
+    /// The tresstate associated with the block.
+    pub treestate: Option<Treestate>,
+}
+
+impl FinalizedWithTrees {
+    pub fn new(block: ContextuallyValidBlock, treestate: Treestate) -> Self {
+        let finalized = FinalizedBlock::from(block);
+
+        Self {
+            finalized,
+            treestate: Some(treestate),
+        }
+    }
+}
+
+impl From<Arc<Block>> for FinalizedWithTrees {
+    fn from(block: Arc<Block>) -> Self {
+        Self::from(FinalizedBlock::from(block))
+    }
+}
+
+impl From<FinalizedBlock> for FinalizedWithTrees {
+    fn from(block: FinalizedBlock) -> Self {
+        Self {
+            finalized: block,
+            treestate: None,
+        }
+    }
+}
+
+impl From<&PreparedBlock> for PreparedBlock {
+    fn from(prepared: &PreparedBlock) -> Self {
+        prepared.clone()
     }
 }
 
@@ -461,12 +560,72 @@ pub enum Request {
     ///
     /// This is a komodo added request, to validate komodo interest
     GetMedianTimePast(Option<block::Hash>),
+
+    /// Looks up a block hash by height in the current best chain.
+    ///
+    /// Returns
+    ///
+    /// * [`Response::BlockHash(Some(hash))`](Response::BlockHash) if the block is in the best chain;
+    /// * [`Response::BlockHash(None)`](Response::BlockHash) otherwise.
+    BestChainBlockHash(block::Height),
+    
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    /// Performs contextual validation of the given block, but does not commit it to the state.
+    ///
+    /// Returns [`Response::ValidBlockProposal`] when successful.
+    /// See `[ReadRequest::CheckBlockProposalValidity]` for details.
+    CheckBlockProposalValidity(PreparedBlock),
+}
+
+impl Request {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            Request::CommitBlock(_) => "commit_block",
+            Request::CommitFinalizedBlock(_) => "commit_finalized_block",
+            Request::AwaitUtxo(_) => "await_utxo",
+            Request::Depth(_) => "depth",
+            Request::Tip => "tip",
+            Request::BlockLocator => "block_locator",
+            Request::Transaction(_) => "transaction",
+            Request::UnspentBestChainUtxo { .. } => "unspent_best_chain_utxo",
+            Request::Block(_) => "block",
+            Request::FindBlockHashes { .. } => "find_block_hashes",
+            Request::FindBlockHeaders { .. } => "find_block_headers",
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            Request::CheckBlockProposalValidity(_) => "check_block_proposal_validity",
+            Request::AwaitBlock(_) => "await_block",
+            Request::BestChainBlockHash(_) => "best_chain_block_hash",
+            Request::GetMedianTimePast(_) => "get_median_time_past",
+        }
+    }
+
+    /// Counts metric for StateService call
+    pub fn count_metric(&self) {
+        metrics::counter!(
+            "state.requests",
+            1,
+            "service" => "state",
+            "type" => self.variant_name()
+        );
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 /// A read-only query about the chain state, via the
 /// [`ReadStateService`](crate::service::ReadStateService).
 pub enum ReadRequest {
+    /// Returns [`ReadResponse::Tip(Option<(Height, block::Hash)>)`](ReadResponse::Tip)
+    /// with the current best chain tip.
+    Tip,
+
+    /// Computes the depth in the current best chain of the block identified by the given hash.
+    ///
+    /// Returns
+    ///
+    /// * [`ReadResponse::Depth(Some(depth))`](ReadResponse::Depth) if the block is in the best chain;
+    /// * [`ReadResponse::Depth(None)`](ReadResponse::Depth) otherwise.
+    Depth(block::Hash),
+
     /// Looks up a block by hash or height in the current best chain.
     ///
     /// Returns
@@ -485,6 +644,24 @@ pub enum ReadRequest {
     /// * [`Response::Transaction(Some(Arc<Transaction>))`](Response::Transaction) if the transaction is in the best chain;
     /// * [`Response::Transaction(None)`](Response::Transaction) otherwise.
     Transaction(transaction::Hash),
+
+    /// Looks up the transaction IDs for a block, using a block hash or height.
+    ///
+    /// Returns
+    ///
+    /// * An ordered list of transaction hashes, or
+    /// * `None` if the block was not found.
+    ///
+    /// Note: Each block has at least one transaction: the coinbase transaction.
+    ///
+    /// Returned txids are in the order they appear in the block.
+    TransactionIdsForBlock(HashOrHeight),
+    
+    /// Looks up a UTXO identified by the given [`OutPoint`](transparent::OutPoint),
+    /// returning `None` immediately if it is unknown.
+    ///
+    /// Checks verified blocks in the finalized chain and the _best_ non-finalized chain.
+    UnspentBestChainUtxo(transparent::OutPoint),
 
     /// Looks up the balance of a set of transparent addresses.
     ///
@@ -533,4 +710,206 @@ pub enum ReadRequest {
     ///
     /// Returns a type with found utxos and transaction information.
     UtxosByAddresses(HashSet<transparent::Address>),
+    
+    /// Looks up a UTXO identified by the given [`OutPoint`](transparent::OutPoint),
+    /// returning `None` immediately if it is unknown.
+    ///
+    /// Checks verified blocks in the finalized chain and _all_ non-finalized chains.
+    ///
+    /// This request is purely informational, there is no guarantee that
+    /// the UTXO remains unspent in the best chain.
+    AnyChainUtxo(transparent::OutPoint),
+
+    /// Computes a block locator object based on the current best chain.
+    ///
+    /// Returns [`ReadResponse::BlockLocator`] with hashes starting
+    /// from the best chain tip, and following the chain of previous
+    /// hashes. The first hash is the best chain tip. The last hash is
+    /// the tip of the finalized portion of the state. Block locators
+    /// are not continuous - some intermediate hashes might be skipped.
+    ///
+    /// If the state is empty, the block locator is also empty.
+    BlockLocator,
+
+    /// Finds the first hash that's in the peer's `known_blocks` and the local best chain.
+    /// Returns a list of hashes that follow that intersection, from the best chain.
+    ///
+    /// If there is no matching hash in the best chain, starts from the genesis hash.
+    ///
+    /// Stops the list of hashes after:
+    ///   * adding the best tip,
+    ///   * adding the `stop` hash to the list, if it is in the best chain, or
+    ///   * adding [`MAX_FIND_BLOCK_HASHES_RESULTS`] hashes to the list.
+    ///
+    /// Returns an empty list if the state is empty.
+    ///
+    /// Returns
+    ///
+    /// [`ReadResponse::BlockHashes(Vec<block::Hash>)`](ReadResponse::BlockHashes).
+    /// See <https://en.bitcoin.it/wiki/Protocol_documentation#getblocks>
+    FindBlockHashes {
+        /// Hashes of known blocks, ordered from highest height to lowest height.
+        known_blocks: Vec<block::Hash>,
+        /// Optionally, the last block hash to request.
+        stop: Option<block::Hash>,
+    },
+
+    /// Finds the first hash that's in the peer's `known_blocks` and the local best chain.
+    /// Returns a list of headers that follow that intersection, from the best chain.
+    ///
+    /// If there is no matching hash in the best chain, starts from the genesis header.
+    ///
+    /// Stops the list of headers after:
+    ///   * adding the best tip,
+    ///   * adding the header matching the `stop` hash to the list, if it is in the best chain, or
+    ///   * adding [`MAX_FIND_BLOCK_HEADERS_RESULTS_FOR_ZEBRA`] headers to the list.
+    ///
+    /// Returns an empty list if the state is empty.
+    ///
+    /// Returns
+    ///
+    /// [`ReadResponse::BlockHeaders(Vec<block::Header>)`](ReadResponse::BlockHeaders).
+    /// See <https://en.bitcoin.it/wiki/Protocol_documentation#getheaders>
+    FindBlockHeaders {
+        /// Hashes of known blocks, ordered from highest height to lowest height.
+        known_blocks: Vec<block::Hash>,
+        /// Optionally, the hash of the last header to request.
+        stop: Option<block::Hash>,
+    },
+
+    /// Komodo added, gets blocks in the provided from start height for the depth.
+    ///
+    /// Returns found blocks.
+    BestChainBlocks(Option<block::Height>, usize),
+
+    /// Request the median time past calculated from the tip.
+    ///
+    /// This is a komodo added request, to validate komodo interest
+    GetMedianTimePast(Option<block::Hash>),
+    
+    /// Looks up a block hash by height in the current best chain.
+    ///
+    /// Returns
+    ///
+    /// * [`ReadResponse::BlockHash(Some(hash))`](ReadResponse::BlockHash) if the block is in the best chain;
+    /// * [`ReadResponse::BlockHash(None)`](ReadResponse::BlockHash) otherwise.
+    BestChainBlockHash(block::Height),
+    
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    /// Get state information from the best block chain.
+    ///
+    /// Returns [`ReadResponse::ChainInfo(info)`](ReadResponse::ChainInfo) where `info` is a
+    /// [`zebra-state::GetBlockTemplateChainInfo`](zebra-state::GetBlockTemplateChainInfo)` structure containing
+    /// best chain state information.
+    ChainInfo,
+
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    /// Get the average solution rate in the best chain.
+    ///
+    /// Returns [`ReadResponse::SolutionRate`]
+    SolutionRate {
+        /// Specifies over difficulty averaging window.
+        num_blocks: usize,
+        /// Optionally estimate the network speed at the time when a certain block was found
+        height: Option<block::Height>,
+    },
+
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    /// Performs contextual validation of the given block, but does not commit it to the state.
+    ///
+    /// It is the caller's responsibility to perform semantic validation.
+    /// (The caller does not need to check proof of work for block proposals.)
+    ///
+    /// Returns [`ReadResponse::ValidBlockProposal`] when successful, or an error if
+    /// the block fails contextual validation.
+    CheckBlockProposalValidity(PreparedBlock),
+}
+
+impl ReadRequest {
+    fn variant_name(&self) -> &'static str {
+        match self {
+            ReadRequest::Tip => "tip",
+            ReadRequest::Depth(_) => "depth",
+            ReadRequest::Block(_) => "block",
+            ReadRequest::Transaction(_) => "transaction",
+            ReadRequest::TransactionIdsForBlock(_) => "transaction_ids_for_block",
+            ReadRequest::UnspentBestChainUtxo { .. } => "unspent_best_chain_utxo",
+            ReadRequest::AnyChainUtxo { .. } => "any_chain_utxo",
+            ReadRequest::BlockLocator => "block_locator",
+            ReadRequest::FindBlockHashes { .. } => "find_block_hashes",
+            ReadRequest::FindBlockHeaders { .. } => "find_block_headers",
+            ReadRequest::SaplingTree { .. } => "sapling_tree",
+            ReadRequest::OrchardTree { .. } => "orchard_tree",
+            ReadRequest::AddressBalance { .. } => "address_balance",
+            ReadRequest::TransactionIdsByAddresses { .. } => "transaction_ids_by_addesses",
+            ReadRequest::UtxosByAddresses(_) => "utxos_by_addesses",
+            ReadRequest::BestChainBlocks(_, _) => "best_chain_blocks",
+            ReadRequest::GetMedianTimePast(_) => "get_median_time_past",
+            ReadRequest::BestChainBlockHash(_) => "best_chain_block_hash",
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            ReadRequest::ChainInfo => "chain_info",
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            ReadRequest::SolutionRate { .. } => "solution_rate",
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            ReadRequest::CheckBlockProposalValidity(_) => "check_block_proposal_validity",
+        }
+    }
+
+    /// Counts metric for ReadStateService call
+    pub fn count_metric(&self) {
+        metrics::counter!(
+            "state.requests",
+            1,
+            "service" => "read_state",
+            "type" => self.variant_name()
+        );
+    }
+}
+
+/// Conversion from read-write [`Request`]s to read-only [`ReadRequest`]s.
+///
+/// Used to dispatch read requests concurrently from the [`StateService`](crate::service::StateService).
+impl TryFrom<Request> for ReadRequest {
+    type Error = &'static str;
+
+    fn try_from(request: Request) -> Result<ReadRequest, Self::Error> {
+        match request {
+            Request::Tip => Ok(ReadRequest::Tip),
+            Request::Depth(hash) => Ok(ReadRequest::Depth(hash)),
+            Request::Block(hash_or_height) => Ok(ReadRequest::Block(hash_or_height)),
+            Request::Transaction(tx_hash) => Ok(ReadRequest::Transaction(tx_hash)),
+            Request::BestChainBlockHash(hash) => Ok(ReadRequest::BestChainBlockHash(hash)),
+            Request::UnspentBestChainUtxo(outpoint) => {
+                Ok(ReadRequest::UnspentBestChainUtxo(outpoint))
+            }
+
+            Request::BlockLocator => Ok(ReadRequest::BlockLocator),
+            Request::FindBlockHashes { known_blocks, stop } => {
+                Ok(ReadRequest::FindBlockHashes { known_blocks, stop })
+            }
+            Request::FindBlockHeaders { known_blocks, stop } => {
+                Ok(ReadRequest::FindBlockHeaders { known_blocks, stop })
+            }
+
+            Request::CommitBlock(_) | Request::CommitFinalizedBlock(_) => {
+                Err("ReadService does not write blocks")
+            }
+
+            Request::AwaitUtxo(_) => Err("ReadService does not track pending UTXOs. \
+                     Manually convert the request to ReadRequest::AnyChainUtxo, \
+                     and handle pending UTXOs"),
+
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            Request::CheckBlockProposalValidity(prepared) => {
+                Ok(ReadRequest::CheckBlockProposalValidity(prepared))
+            }
+            Request::AwaitBlock(_) => Err("ReadService does not track pending UTXOs. \
+                    Manually convert the request to ReadRequest::AwaitBlock, \
+                    and handle pending UTXOs"),
+
+            Request::GetMedianTimePast(hash) => {
+                Ok(ReadRequest::GetMedianTimePast(hash))
+            },
+        }
+    }
 }

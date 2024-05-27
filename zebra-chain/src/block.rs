@@ -35,8 +35,8 @@ pub use commitment::{
     ChainHistoryBlockTxAuthCommitmentHash, ChainHistoryMmrRootHash, Commitment, CommitmentError,
 };
 pub use hash::Hash;
-pub use header::{BlockTimeError, CountedHeader, Header};
-pub use height::Height;
+pub use header::{BlockTimeError, CountedHeader, Header, ZCASH_BLOCK_VERSION};
+pub use height::{Height, HeightDiff};
 pub use serialize::{SerializedBlock, MAX_BLOCK_BYTES};
 
 #[cfg(any(test, feature = "proptest-impl"))]
@@ -202,6 +202,9 @@ impl Block {
     ///
     /// Note: the chain value pool has the opposite sign to the transaction
     /// value pool.
+    /// Komodo: take into account the interest: 
+    /// since the interest accrued to this blocktime is not contained in the chain value pool
+    /// we need to subtract it from the tx input value where it was added by value_balance()
     pub fn chain_value_pool_change(
         &self,
         network: Network,
@@ -212,7 +215,14 @@ impl Block {
         let transaction_value_balance_total = self
             .transactions
             .iter()
-            .flat_map(|t| t.value_balance(network, utxos, height, last_block_time))
+            .flat_map(|t| {
+                // Subtract komodo interest from tx value balance as the chain value pool does not include it.
+                // In fact we could just calculate the value_balance with no interest, by passing None instead last_block_time.
+                // This calculation with interest involved is for better clarity
+                let interest = t.komodo_interest_tx(network, utxos, height, last_block_time).constrain::<NegativeAllowed>()
+                    .expect("conversion from NonNegative to NegativeAllowed is always valid");
+                t.value_balance(network, utxos, height, last_block_time) - ValueBalance::from_transparent_amount(interest)  
+            })
             .sum::<Result<ValueBalance<NegativeAllowed>, _>>()?;
 
         Ok(transaction_value_balance_total.neg())

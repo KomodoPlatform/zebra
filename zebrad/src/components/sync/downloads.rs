@@ -12,6 +12,7 @@ use futures::{
     future::TryFutureExt,
     ready,
     stream::{FuturesUnordered, Stream},
+    FutureExt,
 };
 use pin_project::pin_project;
 use thiserror::Error;
@@ -44,7 +45,7 @@ type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 /// the rest of the capacity is reserved for the other queues.
 /// There is no reserved capacity for the syncer queue:
 /// if the other queues stay full, the syncer will eventually time out and reset.
-const VERIFICATION_PIPELINE_SCALING_MULTIPLIER: usize = 2;
+pub const VERIFICATION_PIPELINE_SCALING_MULTIPLIER: usize = 2;
 
 #[derive(Copy, Clone, Debug)]
 pub(super) struct AlwaysHedge;
@@ -143,7 +144,7 @@ pub struct Downloads<ZN, ZV, ZSTip>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Sync + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError>
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError>
         + Send
         + Sync
         + Clone
@@ -182,7 +183,7 @@ impl<ZN, ZV, ZSTip> Stream for Downloads<ZN, ZV, ZSTip>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Sync + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError>
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError>
         + Send
         + Sync
         + Clone
@@ -229,7 +230,7 @@ impl<ZN, ZV, ZSTip> Downloads<ZN, ZV, ZSTip>
 where
     ZN: Service<zn::Request, Response = zn::Response, Error = BoxError> + Send + Sync + 'static,
     ZN::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError>
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError>
         + Send
         + Sync
         + Clone
@@ -335,7 +336,7 @@ where
                         lookahead_limit + lookahead_limit * VERIFICATION_PIPELINE_SCALING_MULTIPLIER,
                     )
                     .expect("fits in i32");
-                    (tip_height + lookahead).expect("tip is much lower than Height::MAX")
+                    (tip_height + lookahead.into()).expect("tip is much lower than Height::MAX")
                 } else {
                     let genesis_lookahead =
                         u32::try_from(lookahead_limit - 1).expect("fits in u32");
@@ -420,7 +421,7 @@ where
                 // Verify the block.
                 let rsp = verifier
                     .map_err(|error| BlockDownloadVerifyError::VerifierServiceError { error })?
-                    .call(block);
+                    .call(zebra_consensus::Request::Commit(block)).boxed();
 
                 let verification = tokio::select! {
                     biased;

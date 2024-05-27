@@ -170,7 +170,7 @@ mod proptest {
         assert_eq!(format!("{:?}", magics::TESTNET), "Magic(\"5a1f7e62\")");
     }
 
-    #[ignore] // magics are different in Komodo. TODO: add similar test for Komodo
+    #[ignore = "fix for komodo magics"] // magics are different in Komodo. TODO: add similar test for Komodo
     #[test]
     fn magic_debug() {
         zebra_test::init();

@@ -2,6 +2,7 @@
 //! transaction types, so that all of the serialization logic is in one place.
 
 use std::{borrow::Borrow, convert::TryInto, io, sync::Arc};
+use hex::FromHex;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use halo2::pasta::{group::ff::PrimeField, pallas};
@@ -984,9 +985,23 @@ impl TrustedPreallocate for transparent::Output {
 /// A serialized transaction.
 ///
 /// Stores bytes that are guaranteed to be deserializable into a [`Transaction`].
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct SerializedTransaction {
     bytes: Vec<u8>,
+}
+
+impl fmt::Display for SerializedTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&hex::encode(&self.bytes))
+    }
+}
+
+impl fmt::Debug for SerializedTransaction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("SerializedTransaction")
+            .field(&hex::encode(&self.bytes))
+            .finish()
+    }
 }
 
 /// Build a [`SerializedTransaction`] by serializing a block.
@@ -1011,5 +1026,15 @@ impl AsRef<[u8]> for SerializedTransaction {
 impl From<Vec<u8>> for SerializedTransaction {
     fn from(bytes: Vec<u8>) -> Self {
         Self { bytes }
+    }
+}
+
+impl FromHex for SerializedTransaction {
+    type Error = <Vec<u8> as FromHex>::Error;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let bytes = <Vec<u8>>::from_hex(hex)?;
+
+        Ok(bytes.into())
     }
 }

@@ -210,7 +210,9 @@ pub type AddressLocation = OutputLocation;
 )]
 pub struct AddressBalanceLocation {
     /// The total balance of all UTXOs sent to an address.
-    balance: Amount<MaxInt64>,
+    balance: Amount<MaxInt64>,  // MaxInt64 is needed instead of NonNegative for valid balance calculation of komodo big amount in block1, 
+                                // which may temporarily overflow MAX_MONEY and -MAX_MONEY, when balance is collected, 
+                                // especially if any interest is added
 
     /// The location of the first [`transparent::Output`] sent to an address.
     location: AddressLocation,

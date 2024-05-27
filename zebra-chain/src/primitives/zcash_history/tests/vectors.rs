@@ -12,7 +12,7 @@ use zebra_test::vectors::{
 
 /// Test the MMR tree using the activation block of a network upgrade
 /// and its next block.
-#[ignore]  // fix for Komodo
+#[ignore = "fix for komodo upgrades"] // fix for Komodo
 #[test]
 fn tree() -> Result<()> {
     tree_for_network_upgrade(Network::Mainnet, NetworkUpgrade::Heartwood)?;

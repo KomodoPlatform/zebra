@@ -315,7 +315,7 @@ fn v5_coinbase_transaction_with_enable_spends_flag_fails_validation() {
     );
 }
 
-#[ignore]  // Not supported in Komodo due to different network upgrades and blocks
+#[ignore = "V5 not supported in komodo"] // Not supported in Komodo due to different network upgrades and blocks
 #[tokio::test]
 async fn v5_transaction_is_rejected_before_nu5_activation() {
     const V5_TRANSACTION_VERSION: u32 = 5;
@@ -358,13 +358,13 @@ async fn v5_transaction_is_rejected_before_nu5_activation() {
     }
 }
 
-#[ignore]  // Not supported in Komodo due to different network upgrades and blocks
+#[ignore = "V5 not supported in komodo"]  // Not supported in Komodo due to different network upgrades and blocks
 #[test]
 fn v5_transaction_is_accepted_after_nu5_activation_mainnet() {
     v5_transaction_is_accepted_after_nu5_activation_for_network(Network::Mainnet)
 }
 
-#[ignore]  // Not supported in Komodo due to different network upgrades and blocks
+#[ignore = "V5 not supported in komodo"]  // Not supported in Komodo due to different network upgrades and blocks
 #[test]
 fn v5_transaction_is_accepted_after_nu5_activation_testnet() {
     v5_transaction_is_accepted_after_nu5_activation_for_network(Network::Testnet)
@@ -1014,7 +1014,7 @@ fn komodo_v4_transaction_with_conflicting_sprout_nullifier_across_joinsplits_is_
 }
 
 /// Test if V5 transaction with transparent funds is accepted.
-#[ignore] // Nu5 not supported in Komodo
+#[ignore = "V5 not supported in komodo"] // Nu5 not supported in Komodo
 #[tokio::test]
 async fn v5_transaction_with_transparent_transfer_is_accepted() {
     let network = Network::Testnet;
@@ -1069,7 +1069,7 @@ async fn v5_transaction_with_transparent_transfer_is_accepted() {
 
 /// Tests if a non-coinbase V5 transaction with the last valid expiry height is
 /// accepted.
-#[ignore] // Nu5 not supported in Komodo
+#[ignore = "V5 not supported in komodo"] // Nu5 not supported in Komodo
 #[tokio::test]
 async fn v5_transaction_with_last_valid_expiry_height() {
     let state_service =
@@ -1112,7 +1112,7 @@ async fn v5_transaction_with_last_valid_expiry_height() {
 
 /// Tests that a coinbase V5 transaction is accepted only if its expiry height
 /// is equal to the height of the block the transaction belongs to.
-#[ignore]   // Nu5 not supported in komodo
+#[ignore = "V5 not supported in komodo"]   // Nu5 not supported in komodo
 #[tokio::test]
 async fn v5_coinbase_transaction_expiry_height() {
     let state_service =
@@ -1236,7 +1236,7 @@ async fn v5_coinbase_transaction_expiry_height() {
 }
 
 /// Tests if an expired non-coinbase V5 transaction is rejected.
-#[ignore]   // Nu5 not supported in komodo
+#[ignore = "V5 not supported in komodo"]   // Nu5 not supported in komodo
 #[tokio::test]
 async fn v5_transaction_with_too_low_expiry_height() {
     let state_service =
@@ -1286,7 +1286,7 @@ async fn v5_transaction_with_too_low_expiry_height() {
 
 /// Tests if a non-coinbase V5 transaction with an expiry height exceeding the
 /// maximum is rejected.
-#[ignore]   // Nu5 not supported in komodo
+#[ignore = "V5 not supported in komodo"] // Nu5 not supported in komodo
 #[tokio::test]
 async fn v5_transaction_with_exceeding_expiry_height() {
     let state_service =

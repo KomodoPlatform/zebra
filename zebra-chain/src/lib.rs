@@ -20,6 +20,7 @@ extern crate tracing;
 
 pub mod amount;
 pub mod block;
+pub mod chain_sync_status;
 pub mod chain_tip;
 pub mod diagnostic;
 pub mod fmt;
@@ -43,3 +44,10 @@ pub mod komodo_nota;
 
 #[cfg(any(test, feature = "proptest-impl"))]
 pub use block::LedgerState;
+
+/// Error type alias to make working with generic errors easier.
+///
+/// Note: the 'static lifetime bound means that the *type* cannot have any
+/// non-'static lifetimes, (e.g., when a type contains a borrow and is
+/// parameterized by 'a), *not* that the object itself has 'static lifetime.
+pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;

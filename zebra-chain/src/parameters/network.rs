@@ -44,7 +44,7 @@ mod tests;
 /// period. Therefore Zebra must validate those blocks during the grace period using checkpoints.
 /// Therefore the mandatory checkpoint height ([`Network::mandatory_checkpoint_height`]) must be
 /// after the grace period.
-const ZIP_212_GRACE_PERIOD_DURATION: i32 = 32_256;
+const ZIP_212_GRACE_PERIOD_DURATION: i64 = 32_256;
 
 /// An enum describing the possible network choices.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]

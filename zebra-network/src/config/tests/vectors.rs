@@ -7,7 +7,7 @@ use crate::{
     Config,
 };
 
-#[ignore]  // Different in Komodo
+#[ignore = "fix for komodo ip"]  // Different in Komodo
 #[test]
 fn parse_config_listen_addr() {
     zebra_test::init();

@@ -15,7 +15,7 @@ proptest! {
     ///
     /// Given a pair of block heights, estimate the time difference and use it with the lowest
     /// height to check if the estimation of the height is correct.
-    #[ignore]  // Upgrades are different in Komodo
+    #[ignore = "Upgrades are different in Komodo"]  // Upgrades are different in Komodo
     #[test]
     fn network_chain_tip_height_estimation_is_correct(
         network in any::<Network>(),

@@ -276,12 +276,16 @@ impl From<&Arc<Transaction>> for UnminedTx {
 /// A verified unmined transaction, and the corresponding transaction fee.
 ///
 /// This transaction has been fully verified, in the context of the mempool.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(any(test, feature = "proptest-impl"), derive(Arbitrary))]
 pub struct VerifiedUnminedTx {
     /// The unmined transaction.
     pub transaction: UnminedTx,
 
+    /// The number of legacy signature operations in this transaction's
+    /// transparent inputs and outputs.
+    pub legacy_sigop_count: u64,
+    
     /// The transaction fee for this unmined transaction.
     pub miner_fee: Amount<NonNegative>,
 
@@ -294,17 +298,19 @@ impl fmt::Display for VerifiedUnminedTx {
         f.debug_struct("VerifiedUnminedTx")
             .field("transaction", &self.transaction)
             .field("miner_fee", &self.miner_fee)
+            .field("legacy_sigop_count", &self.legacy_sigop_count)
             .finish()
     }
 }
 
 impl VerifiedUnminedTx {
     /// Create a new verified unmined transaction from a transaction and its fee.
-    pub fn new(transaction: UnminedTx, miner_fee: Amount<NonNegative>, interest: Amount<NonNegative>) -> Self {
+    pub fn new(transaction: UnminedTx, miner_fee: Amount<NonNegative>, interest: Amount<NonNegative>, legacy_sigop_count: u64) -> Self {
         Self {
             transaction,
             miner_fee,
             interest,
+            legacy_sigop_count,
         }
     }
 
@@ -370,6 +376,48 @@ impl UnminedTxWithMempoolParams {
             transaction,
             check_low_fee,
             reject_absurd_fee,
+        }
+    }
+}
+
+impl From<Transaction> for UnminedTxWithMempoolParams {
+    fn from(transaction: Transaction) -> Self {
+        // The borrow is actually needed to avoid taking ownership
+        #[allow(clippy::needless_borrow)]
+        Self {
+            transaction: transaction.into(),
+            check_low_fee: true,
+            reject_absurd_fee: false,
+        }
+    }
+}
+
+impl From<&Transaction> for UnminedTxWithMempoolParams {
+    fn from(transaction: &Transaction) -> Self {
+        Self {
+            transaction: transaction.into(),
+            check_low_fee: true,
+            reject_absurd_fee: false,
+        }
+    }
+}
+
+impl From<Arc<Transaction>> for UnminedTxWithMempoolParams {
+    fn from(transaction: Arc<Transaction>) -> Self {
+        Self {
+            transaction: transaction.clone().into(),
+            check_low_fee: true,
+            reject_absurd_fee: false,
+        }
+    }
+}
+
+impl From<&Arc<Transaction>> for UnminedTxWithMempoolParams {
+    fn from(transaction: &Arc<Transaction>) -> Self {
+        Self {
+            transaction: transaction.clone().into(),
+            check_low_fee: true,
+            reject_absurd_fee: false,
         }
     }
 }

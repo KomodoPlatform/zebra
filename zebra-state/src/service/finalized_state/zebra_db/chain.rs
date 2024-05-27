@@ -72,17 +72,11 @@ impl DiskWriteBatch {
         &mut self,
         db: &DiskDb,
         finalized: &FinalizedBlock,
-        sapling_root: sapling::tree::Root,
-        orchard_root: orchard::tree::Root,
-        mut history_tree: Arc<HistoryTree>,
+        history_tree: Arc<HistoryTree>,
     ) -> Result<(), BoxError> {
         let history_tree_cf = db.cf_handle("history_tree").unwrap();
 
-        let FinalizedBlock { block, height, .. } = finalized;
-
-        // TODO: run this CPU-intensive cryptography in a parallel rayon thread, if it shows up in profiles
-        let history_tree_mut = Arc::make_mut(&mut history_tree);
-        history_tree_mut.push(self.network(), block.clone(), sapling_root, orchard_root)?;
+        let FinalizedBlock { height, .. } = finalized;
 
         // Update the tree in state
         let current_tip_height = *height - 1;

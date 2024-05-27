@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 
-use zebra_chain::transaction::{Hash, UnminedTx, UnminedTxId};
+use zebra_chain::transaction::{Hash, UnminedTx, UnminedTxId, VerifiedUnminedTx};
 
 use crate::BoxError;
 
@@ -35,6 +35,16 @@ pub enum Request {
     /// the [`AuthDigest`](zebra_chain::transaction::AuthDigest).
     TransactionsByMinedId(HashSet<Hash>),
 
+    /// Get all the [`VerifiedUnminedTx`] in the mempool.
+    ///
+    /// Equivalent to `TransactionsById(TransactionIds)`,
+    /// but each transaction also includes the `miner_fee` and `legacy_sigop_count` fields.
+    //
+    // TODO: make the Transactions response return VerifiedUnminedTx,
+    //       and remove the FullTransactions variant
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    FullTransactions,
+    
     /// Query matching cached rejected transaction IDs in the mempool,
     /// using a unique set of [`UnminedTxId`]s.
     RejectedTransactionIds(HashSet<UnminedTxId>),
@@ -85,6 +95,13 @@ pub enum Response {
     /// different transactions with different mined IDs.
     Transactions(Vec<UnminedTx>),
 
+    /// Returns all [`VerifiedUnminedTx`] in the mempool.
+    //
+    // TODO: make the Transactions response return VerifiedUnminedTx,
+    //       and remove the FullTransactions variant
+    #[cfg(feature = "getblocktemplate-rpcs")]
+    FullTransactions(Vec<VerifiedUnminedTx>),
+    
     /// Returns matching cached rejected transaction IDs from the mempool,
     RejectedTransactionIds(HashSet<UnminedTxId>),
 

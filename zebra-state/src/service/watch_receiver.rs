@@ -44,6 +44,8 @@ where
     /// This helper method is a shorter way to borrow the value from the [`watch::Receiver`] and
     /// extract some information from it.
     ///
+    /// Does not mark the watched data as seen.
+    ///
     /// # Performance
     ///
     /// A single read lock is acquired to clone `T`, and then released after the
@@ -82,19 +84,30 @@ where
         // Without this change, an eager reader can repeatedly block the channel writer.
         // This seems to happen easily in RPC & ReadStateService futures.
         // (For example, when lightwalletd syncs from Zebra, while Zebra syncs from peers.)
-        let cloned_data = {
-            let borrow_guard = self.receiver.borrow();
-            let cloned_data = borrow_guard.clone();
-            std::mem::drop(borrow_guard);
-
-            cloned_data
-        };
+        let cloned_data = self.cloned_watch_data();
 
         f(cloned_data)
     }
 
+    /// Returns a clone of the watch data in the channel.
+    /// Cloning the watched data helps avoid deadlocks.
+    ///
+    /// Does not mark the watched data as seen.
+    ///
+    /// See `with_watch_data()` for details.
+    pub fn cloned_watch_data(&self) -> T {
+        self.receiver.borrow().clone()
+    }
+
     /// Calls [`watch::Receiver::changed`] and returns the result.
+    ///
+    /// Marks the watched data as seen.
     pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
         self.receiver.changed().await
+    }
+
+    /// Marks the watched data as seen.
+    pub fn mark_as_seen(&mut self) {
+        self.receiver.borrow_and_update();
     }
 }

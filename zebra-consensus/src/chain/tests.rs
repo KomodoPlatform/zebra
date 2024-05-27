@@ -49,7 +49,7 @@ async fn verifiers_from_network(
     network: Network,
 ) -> (
     impl Service<
-            Arc<Block>,
+            crate::Request,
             Response = block::Hash,
             Error = BoxError,
             Future = impl Future<Output = Result<block::Hash, BoxError>>,
@@ -77,7 +77,7 @@ async fn verifiers_from_network(
 }
 
 static BLOCK_VERIFY_TRANSCRIPT_GENESIS: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
+    Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>,
 > = Lazy::new(|| {
     let block: Arc<_> =
         Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..])
@@ -85,27 +85,29 @@ static BLOCK_VERIFY_TRANSCRIPT_GENESIS: Lazy<
             .into();
     let hash = Ok(block.hash());
 
-    vec![(block, hash)]
+    vec![(Request::Commit(block), hash)]
 });
 
 static BLOCK_VERIFY_TRANSCRIPT_GENESIS_FAIL: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
+    Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>,
 > = Lazy::new(|| {
     let block: Arc<_> =
         Block::zcash_deserialize(&zebra_test::vectors::BLOCK_MAINNET_GENESIS_BYTES[..])
             .unwrap()
             .into();
 
-    vec![(block, Err(ExpectedTranscriptError::Any))]
+    vec![(Request::Commit(block), Err(ExpectedTranscriptError::Any))]
 });
 
-static NO_COINBASE_TRANSCRIPT: Lazy<
-    Vec<(Arc<Block>, Result<block::Hash, ExpectedTranscriptError>)>,
-> = Lazy::new(|| {
-    let block = block_no_transactions();
+static NO_COINBASE_TRANSCRIPT: Lazy<Vec<(Request, Result<block::Hash, ExpectedTranscriptError>)>> =
+    Lazy::new(|| {
+        let block = block_no_transactions();
 
-    vec![(Arc::new(block), Err(ExpectedTranscriptError::Any))]
-});
+        vec![(
+            Request::Commit(Arc::new(block)),
+            Err(ExpectedTranscriptError::Any),
+        )]
+    });
 
 static NO_COINBASE_STATE_TRANSCRIPT: Lazy<
     Vec<(zs::Request, Result<zs::Response, ExpectedTranscriptError>)>,
@@ -134,7 +136,7 @@ static STATE_VERIFY_TRANSCRIPT_GENESIS: Lazy<
     )]
 });
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[tokio::test(flavor = "multi_thread")]
 async fn verify_checkpoint_test() -> Result<(), Report> {
     verify_checkpoint(Config {
@@ -205,7 +207,7 @@ async fn verify_fail_no_coinbase() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[tokio::test(flavor = "multi_thread")]
 async fn round_trip_checkpoint_test() -> Result<(), Report> {
     round_trip_checkpoint().await
@@ -231,7 +233,7 @@ async fn round_trip_checkpoint() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[tokio::test(flavor = "multi_thread")]
 async fn verify_fail_add_block_checkpoint_test() -> Result<(), Report> {
     verify_fail_add_block_checkpoint().await

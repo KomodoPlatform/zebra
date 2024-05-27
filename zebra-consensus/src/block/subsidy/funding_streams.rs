@@ -119,6 +119,18 @@ pub fn funding_stream_address(
     Address::from_str(address).expect("Address should deserialize")
 }
 
+/* not supported in komodo
+/// Return a human-readable name and a specification URL for the funding stream `receiver`.
+pub fn funding_stream_recipient_info(
+    receiver: FundingStreamReceiver,
+) -> (&'static str, &'static str) {
+    let name = FUNDING_STREAM_NAMES
+        .get(&receiver)
+        .expect("all funding streams have a name");
+
+    (name, FUNDING_STREAM_SPECIFICATION)
+} */
+
 /// Given a funding stream address, create a script and check if it is the same
 /// as the given lock_script as described in [protocol specification §7.10][7.10]
 ///

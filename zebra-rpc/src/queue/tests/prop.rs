@@ -34,7 +34,7 @@ proptest! {
     #[test]
     fn insert_remove_to_from_queue(transaction in any::<UnminedTx>()) {
         // create a queue
-        let mut runner = Queue::start();
+        let (mut runner, _sender) = Queue::start();
 
         // insert transaction
         runner.queue.insert(UnminedTxWithMempoolParams::new(transaction.clone(), false, false).into());
@@ -54,7 +54,7 @@ proptest! {
     #[test]
     fn queue_size_limit(transactions in any::<[UnminedTx; CHANNEL_AND_QUEUE_CAPACITY + 1]>()) {
         // create a queue
-        let mut runner = Queue::start();
+        let (mut runner, _sender) = Queue::start();
 
         // insert all transactions we have
         transactions.iter().for_each(|t| runner.queue.insert(UnminedTxWithMempoolParams::new(t.clone(), false, false).into()));
@@ -68,7 +68,7 @@ proptest! {
     #[test]
     fn queue_order(transactions in any::<[UnminedTx; 32]>()) {
         // create a queue
-        let mut runner = Queue::start();
+        let (mut runner, _sender) = Queue::start();
         // fill the queue and check insertion order
         for i in 0..CHANNEL_AND_QUEUE_CAPACITY {
             let transaction = transactions[i].clone();
@@ -101,6 +101,7 @@ proptest! {
     /// Test transactions are removed from the queue after time elapses.
     #[test]
     fn remove_expired_transactions_from_queue(transaction in any::<UnminedTx>()) {
+        // let (runtime, _init_guard) = zebra_test::init_async();
         let runtime = zebra_test::init_async();
 
         runtime.block_on(async move {
@@ -108,7 +109,7 @@ proptest! {
             time::pause();
 
             // create a queue
-            let mut runner = Queue::start();
+            let (mut runner, _sender) = Queue::start();
 
             // insert a transaction to the queue
             runner.queue.insert(UnminedTxWithMempoolParams::new(transaction, false, false).into());
@@ -159,13 +160,14 @@ proptest! {
     /// Test transactions are removed from queue after they get in the mempool
     #[test]
     fn queue_runner_mempool(transaction in any::<Transaction>()) {
+        // let (runtime, _init_guard) = zebra_test::init_async();
         let runtime = zebra_test::init_async();
 
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
 
             // create a queue
-            let mut runner = Queue::start();
+            let (mut runner, _sender) = Queue::start();
 
             // insert a transaction to the queue
             let unmined_transaction = UnminedTx::from(transaction);
@@ -239,6 +241,7 @@ proptest! {
     /// Test transactions are removed from queue after they get in the state
     #[test]
     fn queue_runner_state(transaction in any::<Transaction>()) {
+        // let (runtime, _init_guard) = zebra_test::init_async();
         let runtime = zebra_test::init_async();
 
         runtime.block_on(async move {
@@ -246,7 +249,7 @@ proptest! {
             let mut write_state: MockService<_, _, _, BoxError> = MockService::build().for_prop_tests();
 
             // create a queue
-            let mut runner = Queue::start();
+            let (mut runner, _sender) = Queue::start();
 
             // insert a transaction to the queue
             let unmined_transaction = UnminedTx::from(&transaction);
@@ -292,7 +295,7 @@ proptest! {
             let send_task = tokio::spawn(Runner::check_state(read_state.clone(), transactions_hash_set));
 
             let expected_request = ReadRequest::Transaction(transaction.hash());
-            let response = ReadResponse::Transaction(Some((Arc::new(transaction), Height(1))));
+            let response = ReadResponse::Transaction(Some(zebra_state::MinedTx::new(Arc::new(transaction), Height(1), 1)));
 
             read_state
                 .expect_request(expected_request)
@@ -314,13 +317,14 @@ proptest! {
     // Test any given transaction can be mempool retried.
     #[test]
     fn queue_mempool_retry(transaction in any::<Transaction>()) {
+        // let (runtime, _init_guard) = zebra_test::init_async();
         let runtime = zebra_test::init_async();
-
+        
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
 
             // create a queue
-            let mut runner = Queue::start();
+            let (mut runner, _sender) = Queue::start();
 
             // insert a transaction to the queue
             let unmined_transaction = UnminedTx::from(transaction.clone());

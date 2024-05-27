@@ -15,6 +15,9 @@ mod sighash;
 mod txid;
 mod unmined;
 
+#[cfg(feature = "getblocktemplate-rpcs")]
+mod builder;
+
 #[cfg(any(test, feature = "proptest-impl"))]
 #[allow(clippy::unwrap_in_result)]
 pub mod arbitrary;
@@ -1450,7 +1453,7 @@ impl Transaction {
         if let Some(outpoint) = input.outpoint()    {
             let utxo = spent_utxos
             .get(&outpoint)
-            .expect("provided Utxos don't have spent OutPoint");
+            .expect("for transaction input a spent output must be provided");
 
             let tx_height = utxo.height;
             let lock_time = utxo.lock_time;
@@ -1459,9 +1462,9 @@ impl Transaction {
             if NN::komodo_interest_calc_active(network, &block_height) {
                 if utxo.output.value() >= Amount::<NonNegative>::try_from(10 * COIN).unwrap()   {
                     interest = komodo_interest(tx_height, utxo.output.value(), lock_time, last_block_time);
+                    debug!("komodo_interest_input tx block_height={:?} block_time={:?} tx_height={:?} lock_time={:?} interest={:?} utxo value={:?}", block_height, if let Some(last_block_time) = last_block_time { last_block_time.timestamp() } else { 0i64 }, tx_height,  <lock_time::LockTime as TryInto<u32>>::try_into(lock_time), interest, utxo.output.value());
                 }
             }
-            //debug!("komodo_interest_tx tx block_height={:?} block_time={:?} tx_height={:?} lock_time={:?} interest={:?}", block_height, if let Some(last_block_time) = last_block_time { last_block_time.timestamp() } else { 0i64 }, tx_height,  <lock_time::LockTime as TryInto<u32>>::try_into(lock_time), interest);
             interest
         } else {
             Amount::zero()  // Coinbase. input (i) is Input::Coinbase (i.e. not Input::PrevOut),

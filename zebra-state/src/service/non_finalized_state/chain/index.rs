@@ -8,7 +8,7 @@ use std::{
 use mset::MultiSet;
 
 use zebra_chain::{
-    amount::{Amount, NegativeAllowed},
+    amount::{Amount, MaxInt64},
     block::Height,
     transaction, transparent,
 };
@@ -20,7 +20,9 @@ use super::{RevertPosition, UpdateWith};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TransparentTransfers {
     /// The partial chain balance for a transparent address.
-    balance: Amount<NegativeAllowed>,
+    balance: Amount<MaxInt64>,  // MaxInt64 is needed instead of NegativeAllowed for valid balance calculation of komodo big amount in block1, 
+                                // which may temporarily overflow MAX_MONEY (and probably -MAX_MONEY), when balance is collected, 
+                                // especially if any interest is added
 
     /// The partial list of transactions that spent or received UTXOs to a transparent address.
     ///
@@ -218,7 +220,7 @@ impl
 impl TransparentTransfers {
     /// Returns true if there are no transfers for this address.
     pub fn is_empty(&self) -> bool {
-        self.balance == Amount::<NegativeAllowed>::zero()
+        self.balance == Amount::<MaxInt64>::zero()
             && self.tx_ids.is_empty()
             && self.created_utxos.is_empty()
             && self.spent_utxos.is_empty()
@@ -226,7 +228,7 @@ impl TransparentTransfers {
 
     /// Returns the partial balance for this address.
     #[allow(dead_code)]
-    pub fn balance(&self) -> Amount<NegativeAllowed> {
+    pub fn balance(&self) -> Amount<MaxInt64> {
         self.balance
     }
 

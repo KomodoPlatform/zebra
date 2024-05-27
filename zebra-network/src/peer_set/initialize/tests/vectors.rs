@@ -1181,7 +1181,7 @@ async fn local_listener_port_with(listen_addr: SocketAddr, network: Network) {
     let inbound_service =
         service_fn(|_| async { unreachable!("inbound service should never be called") });
 
-    let (_peer_service, address_book, _inbound_conns) = init(config, inbound_service, NoChainTip).await;
+    let (_peer_service, address_book, _peer_stats) = init(config, inbound_service, NoChainTip).await;
     let local_listener = address_book.lock().unwrap().local_listener_meta_addr();
 
     if listen_addr.port() == 0 {
@@ -1231,7 +1231,7 @@ where
         ..Config::default()
     };
 
-    let (_peer_service, address_book,_inbound_conns) = init(config, inbound_service, NoChainTip).await;
+    let (_peer_service, address_book,_peer_stats) = init(config, inbound_service, NoChainTip).await;
 
     address_book
 }
@@ -1489,7 +1489,7 @@ where
 
     let (peerset_tx, peerset_rx) = mpsc::channel::<DiscoveredPeer>(peer_count + 1);
 
-    let (_address_book, _inbound_conns, address_book_updater, _address_metrics, address_book_updater_guard) =
+    let (_address_book, _peer_stats, address_book_updater, _address_metrics, address_book_updater_guard /*, _peer_stat_updater_guard*/) =
         AddressBookUpdater::spawn(&config, unused_v4);
 
     let add_fut = add_initial_peers(config, outbound_connector, peerset_tx, address_book_updater);

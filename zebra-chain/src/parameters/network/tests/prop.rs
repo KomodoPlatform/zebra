@@ -10,7 +10,7 @@ proptest! {
     /// to a limitation of `librustzcash`.
     ///
     /// See [`ZIP_212_GRACE_PERIOD_DURATION`] for more information.
-    #[ignore]  // not supported in Komodo
+    #[ignore = "not supported in Komodo"]  // not supported in Komodo
     #[test]
     fn mandatory_checkpoint_is_after_zip212_grace_period(network in any::<Network>()) {
         zebra_test::init();

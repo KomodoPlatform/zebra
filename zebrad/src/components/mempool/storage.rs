@@ -319,6 +319,15 @@ impl Storage {
         self.verified.transactions().map(|tx| tx.id)
     }
 
+    /// Returns an iterator over the [`VerifiedUnminedTx`] in the set.
+    ///
+    /// Each [`VerifiedUnminedTx`] contains an [`UnminedTx`],
+    /// and adds extra fields from the transaction verifier result.
+    #[allow(dead_code)]
+    pub fn full_transactions(&self) -> impl Iterator<Item = &VerifiedUnminedTx> + '_ {
+        self.verified.full_transactions()
+    }
+
     /// Returns the set of [`UnminedTx`]s in the mempool.
     pub fn transactions(&self) -> impl Iterator<Item = &UnminedTx> {
         self.verified.transactions()

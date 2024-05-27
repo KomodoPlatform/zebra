@@ -238,13 +238,13 @@ fn checkpoint_list_load_hard_coded() -> Result<(), BoxError> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[test]
 fn checkpoint_list_hard_coded_mandatory_mainnet() -> Result<(), BoxError> {
     checkpoint_list_hard_coded_mandatory(Mainnet)
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[test]
 fn checkpoint_list_hard_coded_mandatory_testnet() -> Result<(), BoxError> {
     checkpoint_list_hard_coded_mandatory(Testnet)
@@ -292,7 +292,7 @@ fn checkpoint_list_hard_coded_max_gap(network: Network) -> Result<(), BoxError> 
     assert_eq!(heights.next(), Some(&previous_height));
 
     for height in heights {
-        let height_limit = (previous_height + (crate::MAX_CHECKPOINT_HEIGHT_GAP as i32)).unwrap();
+        let height_limit = (previous_height + (crate::MAX_CHECKPOINT_HEIGHT_GAP as i64)).unwrap();
         assert!(
             height <= &height_limit,
             "Checkpoint gaps must be within MAX_CHECKPOINT_HEIGHT_GAP"

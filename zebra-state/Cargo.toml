@@ -6,6 +6,15 @@ license = "MIT OR Apache-2.0"
 edition = "2021"
 
 [features]
+
+# Production features that activate extra dependencies, or extra features in dependencies
+
+# Experimental mining RPC support
+getblocktemplate-rpcs = [
+    "zebra-chain/getblocktemplate-rpcs",
+]
+
+# Test-only features
 proptest-impl = ["proptest", "proptest-derive", "zebra-test", "zebra-chain/proptest-impl"]
 
 [dependencies]
@@ -15,13 +24,14 @@ dirs = "4.0.0"
 displaydoc = "0.2.3"
 futures = "0.3.21"
 hex = "0.4.3"
+indexmap = "1.9.3"
 itertools = "0.10.3"
 lazy_static = "1.4.0"
 metrics = "0.18.1"
 mset = "0.1.0"
 regex = "1.6.0"
 rlimit = "0.8.3"
-rocksdb = { version = "0.18.0", default_features = false, features = ["lz4"] }
+rocksdb = { version = "0.20.1", default_features = false, features = ["lz4"] }
 serde = { version = "1.0.141", features = ["serde_derive"] }
 tempfile = "3.3.0"
 thiserror = "1.0.31"

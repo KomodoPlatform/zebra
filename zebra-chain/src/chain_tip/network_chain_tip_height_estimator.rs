@@ -5,7 +5,7 @@ use std::vec;
 use chrono::{DateTime, Duration, Utc};
 
 use crate::{
-    block,
+    block::{self, HeightDiff},
     parameters::{Network, NetworkUpgrade},
 };
 
@@ -119,21 +119,25 @@ impl NetworkChainTipHeightEstimator {
             time_difference_seconds -= 1;
         }
 
-        let block_difference = i32::try_from(
-            // Euclidean division is used so that the number is rounded towards negative infinity,
-            // so that fractionary values always round down to the previous height when going back
-            // in time (i.e., when the dividend is negative). This works because the divisor (the
-            // target spacing) is always positive.
-            time_difference_seconds.div_euclid(self.current_target_spacing.num_seconds()),
-        )
-        .expect("time difference is too large");
+        // Euclidean division is used so that the number is rounded towards negative infinity,
+        // so that fractionary values always round down to the previous height when going back
+        // in time (i.e., when the dividend is negative). This works because the divisor (the
+        // target spacing) is always positive.
+        let block_difference: HeightDiff =
+            time_difference_seconds.div_euclid(self.current_target_spacing.num_seconds());
 
-        if -(block_difference as i64) > self.current_height.0 as i64 {
+        let current_height_as_diff = HeightDiff::from(self.current_height.0);
+
+        if let Some(height_estimate) = self.current_height + block_difference {
+            height_estimate
+        } else if current_height_as_diff + block_difference < 0 {
             // Gracefully handle attempting to estimate a block before genesis. This can happen if
             // the local time is set incorrectly to a time too far in the past.
             block::Height(0)
         } else {
-            (self.current_height + block_difference).expect("block difference is too large")
+            // Gracefully handle attempting to estimate a block at a very large height. This can
+            // happen if the local time is set incorrectly to a time too far in the future.
+            block::Height::MAX
         }
     }
 }

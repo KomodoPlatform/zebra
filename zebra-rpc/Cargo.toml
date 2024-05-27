@@ -9,12 +9,36 @@ edition = "2021"
 
 [features]
 default = []
-proptest-impl = ["proptest", "proptest-derive", "zebra-chain/proptest-impl", "zebra-state/proptest-impl"]
+
+# Production features that activate extra dependencies, or extra features in dependencies
+
+# Experimental mining RPC support
+getblocktemplate-rpcs = [
+    "rand",
+    "zcash_address",
+    "zebra-consensus/getblocktemplate-rpcs",
+    "zebra-state/getblocktemplate-rpcs",
+    "zebra-node-services/getblocktemplate-rpcs",
+    "zebra-chain/getblocktemplate-rpcs",
+]
+
+# Test-only features
+
+# Test-only features
+proptest-impl = [
+    "proptest",
+    "zebra-consensus/proptest-impl",
+    "zebra-state/proptest-impl",
+    "zebra-network/proptest-impl",
+    "zebra-chain/proptest-impl",
+]
 
 [dependencies]
 zebra-chain = { path = "../zebra-chain" }
+zebra-consensus = { path = "../zebra-consensus" }
 zebra-network = { path = "../zebra-network" }
 zebra-node-services = { path = "../zebra-node-services" }
+zebra-script = { path = "../zebra-script" }
 zebra-state = { path = "../zebra-state" }
 
 chrono = "0.4.19"
@@ -26,6 +50,8 @@ hyper = { version = "0.14.20", features = ["http1", "server"] }
 jsonrpc-core = "18.0.0"
 jsonrpc-derive = "18.0.0"
 jsonrpc-http-server = "18.0.0"
+num_cpus = "1.15.0"
+
 # zebra-rpc needs the preserve_order feature in serde_json, which is a dependency of jsonrpc-core
 serde_json = { version = "1.0.82", features = ["preserve_order"] }
 indexmap = { version = "1.9.1", features = ["serde"] }
@@ -39,11 +65,16 @@ tracing-futures = "0.2.5"
 hex = { version = "0.4.3", features = ["serde"] }
 serde = { version = "1.0.141", features = ["serde_derive"] }
 
+# Experimental feature getblocktemplate-rpcs
+rand = { version = "0.8.5", package = "rand", optional = true }
+# ECC deps used by getblocktemplate-rpcs feature
+zcash_address = { path = "../patches/librustzcash/components/zcash_address/", optional = true } # zcash_address = { version = "0.2.0", optional = true }
+
 proptest = { version = "0.10.1", optional = true }
 proptest-derive = { version = "0.3.0", optional = true }
 
 [dev-dependencies]
-insta = { version = "1.15.0", features = ["redactions"] }
+insta = { version = "1.15.0", features = ["redactions", "ron"] }
 proptest = "0.10.1"
 proptest-derive = "0.3.0"
 serde_json = "1.0.82"
@@ -52,5 +83,8 @@ thiserror = "1.0.31"
 tokio = { version = "1.20.1", features = ["full", "tracing", "test-util"] }
 
 zebra-chain = { path = "../zebra-chain", features = ["proptest-impl"] }
+zebra-consensus = { path = "../zebra-consensus", features = ["proptest-impl"] }
+zebra-network = { path = "../zebra-network", features = ["proptest-impl"] }
 zebra-state = { path = "../zebra-state", features = ["proptest-impl"] }
-zebra-test = { path = "../zebra-test/" }
+
+zebra-test = { path = "../zebra-test" }

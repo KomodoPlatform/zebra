@@ -22,7 +22,7 @@ const MAX_TRANSPARENT_INPUTS: usize = 10;
 
 proptest! {
     /// Test if a transaction that has a zero value as the lock time is always unlocked.
-    #[ignore]  // Not supported in Komodo due to state_service not returning the previous block time in Request::Block. TODO: return a fake previous blokck and MTP to fix
+    #[ignore = "fix for komodo state"] // Not supported in Komodo due to state_service not returning the previous block time in Request::Block. TODO: return a fake previous block and MTP to fix
     #[test]
     fn zero_lock_time_is_always_unlocked(
         (network, block_height) in sapling_onwards_strategy(),
@@ -55,7 +55,7 @@ proptest! {
     }
 
     /// Test if having [`u32::MAX`] as the sequence number of all inputs disables the lock time.
-    #[ignore]  // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous block and MTP to fix
+    #[ignore = "fix for komodo state"]  // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous block and MTP to fix
     #[test]
     fn lock_time_is_ignored_because_of_sequence_numbers(
         (network, block_height) in sapling_onwards_strategy(),
@@ -154,7 +154,7 @@ proptest! {
     }
 
     /// Test if a transaction unlocked at an earlier block time is accepted.
-    #[ignore]  // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous blokck and MTP to fix
+    #[ignore = "fix for komodo state"]  // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous blokck and MTP to fix
     #[test]
     fn transaction_with_lock_height_is_accepted(
         (network, block_height) in sapling_onwards_strategy(),
@@ -193,7 +193,7 @@ proptest! {
     }
 
     /// Test if transaction unlocked at a previous block time is accepted.
-    #[ignore]  // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous blokck and MTP to fix
+    #[ignore = "fix for komodo state"] // Not supported in Komodo due to state_service not returning the previous block time. TODO: return a fake previous blokck and MTP to fix
     #[test]
     fn transaction_with_lock_time_is_accepted(
         (network, block_height) in sapling_onwards_strategy(),

@@ -35,7 +35,7 @@ use crate::{
     meta_addr::{MetaAddr, MetaAddrChange},
     peer::{self, HandshakeRequest, MinimumPeerVersion, OutboundConnectorRequest, PeerPreference},
     peer_set::{set::MorePeers, ActiveConnectionCounter, CandidateSet, ConnectionTracker, PeerSet},
-    AddressBook, BoxError, Config, Request, Response, address_book::InboundConns,
+    AddressBook, BoxError, Config, Request, Response, komodo_peer_stat::PeerStats,
 };
 
 
@@ -87,7 +87,7 @@ pub async fn init<S, C>(
 ) -> (
     Buffer<BoxService<Request, Response, BoxError>, Request>,
     Arc<std::sync::Mutex<AddressBook>>,
-    Arc<std::sync::Mutex<InboundConns>>,
+    Arc<std::sync::Mutex<PeerStats>>,
 )
 where
     S: Service<Request, Response = Response, Error = BoxError> + Clone + Send + 'static,
@@ -103,7 +103,7 @@ where
 
     let (tcp_listener, listen_addr) = open_listener(&config.clone()).await;
 
-    let (address_book, inbound_conns, address_book_updater, address_metrics, address_book_updater_guard) =
+    let (address_book, peer_stats, address_book_updater, address_metrics, address_book_updater_guard) =
         AddressBookUpdater::spawn(&config, listen_addr);
 
     // Create a broadcast channel for peer inventory advertisements.
@@ -235,7 +235,7 @@ where
         .send(vec![listen_guard, crawl_guard, address_book_updater_guard])
         .unwrap();
 
-    (peer_set, address_book, inbound_conns)
+    (peer_set, address_book, peer_stats)
 }
 
 /// Use the provided `outbound_connector` to connect to the configured initial peers,

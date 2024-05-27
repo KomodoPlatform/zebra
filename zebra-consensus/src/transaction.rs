@@ -28,7 +28,7 @@ use zebra_chain::{
         self, HashType, SigHash, Transaction, UnminedTx, UnminedTxId, VerifiedUnminedTx, LockTime,
     },
     transparent::{self, OrderedUtxo}, komodo_hardfork::NN, interest::KOMODO_MAXMEMPOOLTIME, work::difficulty::{CompactDifficulty},
-    serialization::ZcashSerialize,
+    serialization::{ZcashSerialize, DateTime32},
 };
 
 use zebra_script::CachedFfiTransaction;
@@ -245,7 +245,7 @@ pub enum Request {
 
 /// The response type for the transaction verifier service.
 /// Responses identify the transaction that was verified.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Response {
     /// A response to a block transaction verification request.
     Block {
@@ -607,19 +607,22 @@ where
                 }
             }
 
+            let legacy_sigop_count = cached_ffi_transaction.legacy_sigop_count()?;
+
             let rsp = match req {
                 Request::Block { .. } => Response::Block {
                     tx_id,
                     miner_fee,
-                    legacy_sigop_count: cached_ffi_transaction.legacy_sigop_count()?,
+                    legacy_sigop_count,
                     interest: Some(value_interest),
                 },
                 Request::Mempool { transaction, .. } => Response::Mempool {
                     transaction: VerifiedUnminedTx::new(
                         transaction,
-                        miner_fee // unwrap_or(Amount::zero()),
+                        miner_fee
                             .expect("unexpected mempool coinbase transaction: should have already rejected"),
                         value_interest,
+                        legacy_sigop_count,
                     ),
                 },
             };

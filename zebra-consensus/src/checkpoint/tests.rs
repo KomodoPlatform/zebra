@@ -207,7 +207,7 @@ async fn multi_item_checkpoint_list() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[tokio::test(flavor = "multi_thread")]
 async fn continuous_blockchain_no_restart() -> Result<(), Report> {
     continuous_blockchain(None, Mainnet).await?;
@@ -215,7 +215,7 @@ async fn continuous_blockchain_no_restart() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // could not run komodo has different mainnet and testnet genesis. TODO: replace on komodo blocks
+#[ignore = "fix for Komodo blocks"] // could not run komodo has different mainnet and testnet genesis. TODO: replace on komodo blocks
 #[tokio::test(flavor = "multi_thread")]
 async fn continuous_blockchain_restart() -> Result<(), Report> {
     for height in 0..zebra_test::vectors::CONTINUOUS_MAINNET_BLOCKS.len() {
@@ -764,7 +764,7 @@ async fn checkpoint_drop_cancel() -> Result<(), Report> {
     Ok(())
 }
 
-#[ignore] // blocks are different in Komodo. TODO: fix for KMD
+#[ignore = "fix for Komodo blocks"] // blocks are different in Komodo. TODO: fix for KMD
 #[tokio::test(flavor = "multi_thread")]
 async fn hard_coded_mainnet_test() -> Result<(), Report> {
     hard_coded_mainnet().await

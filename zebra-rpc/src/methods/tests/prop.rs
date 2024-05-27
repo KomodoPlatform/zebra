@@ -19,7 +19,7 @@ use zebra_chain::{
         NetworkUpgrade,
     },
     serialization::{ZcashDeserialize, ZcashSerialize},
-    transaction::{self, Transaction, UnminedTx, UnminedTxId, UnminedTxWithMempoolParams},
+    transaction::{self, Transaction, UnminedTx, UnminedTxId, VerifiedUnminedTx, UnminedTxWithMempoolParams},
     transparent,
 };
 use zebra_node_services::mempool;
@@ -32,7 +32,7 @@ use super::super::{
 };
 
 use std::sync::Arc;
-use zebra_network::{AddressBook, address_book::InboundConns};
+use zebra_network::{AddressBook, komodo_peer_stat::PeerStats, Config};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
@@ -42,17 +42,21 @@ proptest! {
     fn mempool_receives_raw_transaction(transaction in any::<Transaction>()) {
         let runtime = zebra_test::init_async();
 
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
+
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
             let mut state: MockService<_, _, _, BoxError> = MockService::build().for_prop_tests();
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
             let hash = SentTransactionHash(transaction.hash());
 
@@ -94,6 +98,7 @@ proptest! {
     #[test]
     fn mempool_errors_are_forwarded(transaction in any::<Transaction>()) {
         let runtime = zebra_test::init_async();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
@@ -101,12 +106,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let transaction_bytes = transaction
@@ -153,6 +160,7 @@ proptest! {
     #[test]
     fn rejected_transactions_are_reported(transaction in any::<Transaction>()) {
         let runtime = zebra_test::init_async();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
@@ -160,12 +168,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let transaction_bytes = transaction
@@ -220,6 +230,7 @@ proptest! {
 
         // CORRECTNESS: Nothing in this test depends on real time, so we can speed it up.
         tokio::time::pause();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         runtime.block_on(async move {
             let mut mempool = MockService::build().for_prop_tests();
@@ -227,12 +238,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let send_task = tokio::spawn(rpc.send_raw_transaction(non_hex_string));
@@ -271,6 +284,7 @@ proptest! {
     fn invalid_transaction_results_in_an_error(random_bytes in any::<Vec<u8>>()) {
         let runtime = zebra_test::init_async();
         let _guard = runtime.enter();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // CORRECTNESS: Nothing in this test depends on real time, so we can speed it up.
         tokio::time::pause();
@@ -283,12 +297,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let send_task = tokio::spawn(rpc.send_raw_transaction(hex::encode(random_bytes)));
@@ -324,9 +340,10 @@ proptest! {
     /// Make the mock mempool service return a list of transaction IDs, and check that the RPC call
     /// returns those IDs as hexadecimal strings.
     #[test]
-    fn mempool_transactions_are_sent_to_caller(transaction_ids in any::<HashSet<UnminedTxId>>()) {
+    fn mempool_transactions_are_sent_to_caller(transactions in any::<Vec<VerifiedUnminedTx>>()) {
         let runtime = zebra_test::init_async();
         let _guard = runtime.enter();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // CORRECTNESS: Nothing in this test depends on real time, so we can speed it up.
         tokio::time::pause();
@@ -337,25 +354,67 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let call_task = tokio::spawn(rpc.get_raw_mempool());
-            let mut expected_response: Vec<String> = transaction_ids
-                .iter()
-                .map(|id| id.mined_id().encode_hex())
-                .collect();
-            expected_response.sort();
 
-            mempool
-                .expect_request(mempool::Request::TransactionIds)
-                .await?
-                .respond(mempool::Response::TransactionIds(transaction_ids));
+
+            #[cfg(not(feature = "getblocktemplate-rpcs"))]
+            let expected_response = {
+                let transaction_ids: HashSet<_> = transactions
+                    .iter()
+                    .map(|tx| tx.transaction.id)
+                    .collect();
+
+                let mut expected_response: Vec<String> = transaction_ids
+                    .iter()
+                    .map(|id| id.mined_id().encode_hex())
+                    .collect();
+                expected_response.sort();
+
+                mempool
+                    .expect_request(mempool::Request::TransactionIds)
+                    .await?
+                    .respond(mempool::Response::TransactionIds(transaction_ids));
+
+                expected_response
+            };
+
+            // Note: this depends on `SHOULD_USE_ZCASHD_ORDER` being true.
+            #[cfg(feature = "getblocktemplate-rpcs")]
+            let expected_response = {
+                let mut expected_response = transactions.clone();
+                expected_response.sort_by_cached_key(|tx| {
+                    // zcashd uses modified fee here but Zebra doesn't currently
+                    // support prioritizing transactions
+                    std::cmp::Reverse((
+                        i64::from(tx.miner_fee) as u128 * zebra_chain::block::MAX_BLOCK_BYTES as u128
+                            / tx.transaction.size as u128,
+                        // transaction hashes are compared in their serialized byte-order.
+                        tx.transaction.id.mined_id(),
+                    ))
+                });
+
+                let expected_response = expected_response
+                    .iter()
+                    .map(|tx| tx.transaction.id.mined_id().encode_hex())
+                    .collect();
+
+                mempool
+                    .expect_request(mempool::Request::FullTransactions)
+                    .await?
+                    .respond(mempool::Response::FullTransactions(transactions));
+
+                expected_response
+            };
 
             mempool.expect_no_requests().await?;
             state.expect_no_requests().await?;
@@ -384,6 +443,7 @@ proptest! {
     ) {
         let runtime = zebra_test::init_async();
         let _guard = runtime.enter();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // CORRECTNESS: Nothing in this test depends on real time, so we can speed it up.
         tokio::time::pause();
@@ -394,12 +454,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let send_task = tokio::spawn(rpc.get_raw_transaction(non_hex_string, 0));
@@ -440,6 +502,7 @@ proptest! {
     ) {
         let runtime = zebra_test::init_async();
         let _guard = runtime.enter();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // CORRECTNESS: Nothing in this test depends on real time, so we can speed it up.
         tokio::time::pause();
@@ -452,12 +515,14 @@ proptest! {
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let send_task = tokio::spawn(rpc.get_raw_transaction(hex::encode(random_bytes), 0));
@@ -495,16 +560,19 @@ proptest! {
         let _guard = runtime.enter();
         let mut mempool = MockService::build().for_prop_tests();
         let mut state: MockService<_, _, _, BoxError> = MockService::build().for_prop_tests();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // look for an error with a `NoChainTip`
         let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
             "RPC test",
+            false,
+            true,
             Buffer::new(mempool.clone(), 1),
             Buffer::new(state.clone(), 1),
             NoChainTip,
             network,
             Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-            Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+            PeerStats::new(&config),
         );
 
         let response = rpc.get_blockchain_info();
@@ -539,6 +607,7 @@ proptest! {
         let block_height = block.coinbase_height().unwrap();
         let block_hash = block.hash();
         let block_time = block.header.time;
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         // create a mocked `ChainTip`
         let (chain_tip, mock_chain_tip_sender) = MockChainTip::new();
@@ -549,12 +618,14 @@ proptest! {
         // Start RPC with the mocked `ChainTip`
         let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
             "RPC test",
+            false,
+            true,
             Buffer::new(mempool.clone(), 1),
             Buffer::new(state.clone(), 1),
             chain_tip,
             network,
             Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-            Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+            PeerStats::new(&config),
         );
         let response = rpc.get_blockchain_info();
 
@@ -628,6 +699,7 @@ proptest! {
                 .map(|address| address.to_string())
                 .collect(),
         };
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         tokio::time::pause();
 
@@ -635,12 +707,14 @@ proptest! {
         runtime.block_on(async move {
             let (rpc, _rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 chain_tip,
                 network,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             // Build the future to call the RPC
@@ -691,6 +765,7 @@ proptest! {
 
         // Create a mocked `ChainTip`
         let (chain_tip, _mock_chain_tip_sender) = MockChainTip::new();
+        let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
         tokio::time::pause();
 
@@ -698,12 +773,14 @@ proptest! {
         runtime.block_on(async move {
             let (rpc, _rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 chain_tip,
                 network,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let address_strings = AddressStrings {
@@ -746,15 +823,18 @@ proptest! {
 
             let mut mempool = MockService::build().for_prop_tests();
             let mut state: MockService<_, _, _, BoxError> = MockService::build().for_prop_tests();
+            let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             // send a transaction
@@ -835,15 +915,18 @@ proptest! {
 
             let mut mempool = MockService::build().for_prop_tests();
             let mut state: MockService<_, _, _, BoxError> = MockService::build().for_prop_tests();
+            let config = Config { network: Mainnet, dont_use_metrics_for_getpeerinfo: true, ..Config::default() };
 
             let (rpc, rpc_tx_queue_task_handle) = RpcImpl::new(
                 "RPC test",
+                false,
+                true,
                 Buffer::new(mempool.clone(), 1),
                 Buffer::new(state.clone(), 1),
                 NoChainTip,
                 Mainnet,
                 Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-                Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+                PeerStats::new(&config),
             );
 
             let mut transactions_hash_set = HashSet::new();

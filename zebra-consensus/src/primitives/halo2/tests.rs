@@ -130,6 +130,7 @@ where
     Ok(())
 }
 
+#[ignore] // failing in Komodo, orchard not supported
 #[tokio::test(flavor = "multi_thread")]
 async fn verify_generated_halo2_proofs() {
     zebra_test::init();

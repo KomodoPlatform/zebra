@@ -18,18 +18,19 @@ const DEFAULT_PARTIAL_CHAIN_PROPTEST_CASES: u32 = 1;
 
 #[test]
 fn blocks_with_v5_transactions() -> Result<()> {
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
     proptest!(ProptestConfig::with_cases(env::var("PROPTEST_CASES")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(DEFAULT_PARTIAL_CHAIN_PROPTEST_CASES)),
         |((chain, count, network, _history_tree) in PreparedChain::default())| {
-            let mut state = FinalizedState::new(&Config::ephemeral(), network);
+            let mut state = FinalizedState::new(&Config::ephemeral(), network, #[cfg(feature = "elasticsearch")] None);
             let mut height = Height(0);
             // use `count` to minimize test failures, so they are easier to diagnose
             for block in chain.iter().take(count) {
+                let finalized = FinalizedBlock::from(block.block.clone());
                 let hash = state.commit_finalized_direct(
-                    FinalizedBlock::from(block.block.clone()),
+                    finalized.into(),
                     "blocks_with_v5_transactions test"
                 );
                 prop_assert_eq!(Some(height), state.finalized_tip_height());
@@ -50,7 +51,7 @@ fn blocks_with_v5_transactions() -> Result<()> {
 #[test]
 #[allow(clippy::print_stderr)]
 fn all_upgrades_and_wrong_commitments_with_fake_activation_heights() -> Result<()> {
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     if std::env::var_os("TEST_FAKE_ACTIVATION_HEIGHTS").is_none() {
         eprintln!("Skipping all_upgrades_and_wrong_commitments_with_fake_activation_heights() since $TEST_FAKE_ACTIVATION_HEIGHTS is NOT set");
@@ -64,7 +65,7 @@ fn all_upgrades_and_wrong_commitments_with_fake_activation_heights() -> Result<(
         .unwrap_or(DEFAULT_PARTIAL_CHAIN_PROPTEST_CASES)),
         |((chain, _count, network, _history_tree) in PreparedChain::default().with_valid_commitments().no_shrink())| {
 
-            let mut state = FinalizedState::new(&Config::ephemeral(), network);
+            let mut state = FinalizedState::new(&Config::ephemeral(), network, #[cfg(feature = "elasticsearch")] None);
             let mut height = Height(0);
             let heartwood_height = NetworkUpgrade::Heartwood.activation_height(network).unwrap();
             let heartwood_height_plus1 = (heartwood_height + 1).unwrap();
@@ -83,16 +84,18 @@ fn all_upgrades_and_wrong_commitments_with_fake_activation_heights() -> Result<(
                         h == nu5_height ||
                         h == nu5_height_plus1 => {
                             let block = block.block.clone().set_block_commitment([0x42; 32]);
+                            let finalized = FinalizedBlock::from(block);
                             state.commit_finalized_direct(
-                                FinalizedBlock::from(block),
+                                finalized.into(),
                                 "all_upgrades test"
                             ).expect_err("Must fail commitment check");
                             failure_count += 1;
                         },
                     _ => {},
                 }
+                let finalized = FinalizedBlock::from(block.block.clone());
                 let hash = state.commit_finalized_direct(
-                    FinalizedBlock::from(block.block.clone()),
+                    finalized.into(),
                     "all_upgrades test"
                 ).unwrap();
                 prop_assert_eq!(Some(height), state.finalized_tip_height());

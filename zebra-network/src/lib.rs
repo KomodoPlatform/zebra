@@ -142,6 +142,7 @@ extern crate bitflags;
 pub type BoxError = Box<dyn std::error::Error + Send + Sync + 'static>;
 
 pub mod address_book;
+pub mod address_book_peers;
 mod address_book_updater;
 mod config;
 pub mod constants;
@@ -151,6 +152,7 @@ mod peer;
 mod peer_set;
 mod policies;
 mod protocol;
+pub mod komodo_peer_stat;
 
 #[cfg(feature = "tor")]
 pub use crate::isolated::tor::connect_isolated_tor;
@@ -165,6 +167,7 @@ pub use crate::isolated::{
 
 pub use crate::{
     address_book::AddressBook,
+    address_book_peers::AddressBookPeers,
     config::Config,
     isolated::{connect_isolated, connect_isolated_tcp_direct},
     meta_addr::PeerAddrState,

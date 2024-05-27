@@ -142,7 +142,7 @@ fn block_test_vectors_height_mainnet() {
     block_test_vectors_height(Mainnet);
 }
 
-#[ignore]  // TODO fix for Komodo blocks
+#[ignore = "fix for komodo blocks"]  // TODO fix for Komodo blocks
 #[test]
 fn block_test_vectors_height_testnet() {
     zebra_test::init();
@@ -190,7 +190,7 @@ fn block_test_vectors_height(network: Network) {
     }
 }
 
-#[ignore]  // TODO fix for Komodo blocks
+#[ignore = "fix for komodo blocks"]  // TODO fix for Komodo blocks
 #[test]
 fn block_commitment_mainnet() {
     zebra_test::init();
@@ -198,7 +198,7 @@ fn block_commitment_mainnet() {
     block_commitment(Mainnet);
 }
 
-#[ignore]  // TODO fix for Komodo blocks
+#[ignore = "fix for komodo blocks"]  // TODO fix for Komodo blocks
 #[test]
 fn block_commitment_testnet() {
     zebra_test::init();

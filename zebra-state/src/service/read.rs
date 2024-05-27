@@ -15,6 +15,9 @@ pub mod block;
 pub mod find;
 pub mod tree;
 
+#[cfg(feature = "getblocktemplate-rpcs")]
+pub mod difficulty;
+
 #[cfg(test)]
 mod tests;
 
@@ -23,9 +26,16 @@ pub use address::{
     tx_id::transparent_tx_ids,
     utxo::{transparent_utxos, AddressUtxos, ADDRESS_HEIGHTS_FULL_RANGE},
 };
-pub use block::{block, block_header, transaction, unspent_utxo};
+pub use block::{block, block_header, mined_transaction, unspent_utxo, transaction_hashes_for_block, any_utxo};
 pub use find::{
-    chain_contains_hash, find_chain_hashes, find_chain_headers, hash_by_height, height_by_hash,
-    tip_height,
+    chain_contains_hash, find_chain_hashes, find_chain_headers, hash_by_height, height_by_hash, tip,
+    tip_height, read_best_chain_blocks, best_tip, depth, block_locator, komodo_next_median_time_past, komodo_init_last_nota,
 };
 pub use tree::{orchard_tree, sapling_tree};
+
+/// If a finalized state query is interrupted by a new finalized block,
+/// retry this many times.
+///
+/// Once we're at the tip, we expect up to 2 blocks to arrive at the same time.
+/// If any more arrive, the client should wait until we're synchronised with our peers.
+pub const FINALIZED_STATE_QUERY_RETRIES: usize = 3;

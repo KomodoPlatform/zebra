@@ -21,7 +21,7 @@ use crate::{
 
 proptest! {
     /// Check if discovered outdated peers are immediately dropped by the [`PeerSet`].
-    #[ignore]  // Upgrades are different in Komodo
+    #[ignore = "fix for komodo upgrades"]  // Upgrades are different in Komodo
     #[test]
     fn only_non_outdated_peers_are_accepted(
         network in any::<Network>(),
@@ -55,7 +55,7 @@ proptest! {
     }
 
     /// Check if peers that become outdated after a network upgrade are dropped by the [`PeerSet`].
-    #[ignore]  // Upgrades are different in Komodo
+    #[ignore = "fix for komodo upgrades"]  // Upgrades are different in Komodo
     #[test]
     fn outdated_peers_are_dropped_on_network_upgrade(
         block_heights in any::<BlockHeightPairAcrossNetworkUpgrades>(),

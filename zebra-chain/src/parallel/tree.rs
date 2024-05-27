@@ -160,7 +160,8 @@ impl NoteCommitmentTrees {
     }
 
     /// Update the sapling note commitment tree.
-    fn update_sapling_note_commitment_tree(
+    /// pub added by Komodo
+    pub fn update_sapling_note_commitment_tree(
         mut sapling: Arc<sapling::tree::NoteCommitmentTree>,
         sapling_note_commitments: Vec<sapling::tree::NoteCommitmentUpdate>,
     ) -> Result<Arc<sapling::tree::NoteCommitmentTree>, NoteCommitmentTreeError> {

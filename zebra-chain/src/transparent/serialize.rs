@@ -5,10 +5,10 @@ use std::io;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 use crate::{
-    block,
+    block::{self, Height},
     serialization::{
         zcash_serialize_bytes, ReadZcashExt, SerializationError, ZcashDeserialize,
-        ZcashDeserializeInto, ZcashSerialize,
+        ZcashDeserializeInto, ZcashSerialize, FakeWriter,
     },
     transaction,
 };
@@ -23,6 +23,16 @@ use super::{CoinbaseData, Input, OutPoint, Output, Script};
 ///
 /// <https://developer.bitcoin.org/reference/transactions.html#coinbase-input-the-input-of-the-first-transaction-in-a-block>
 pub const MAX_COINBASE_DATA_LEN: usize = 100;
+
+/// The maximum length of the encoded coinbase height.
+///
+/// # Consensus
+///
+/// > The length of heightBytes MUST be in the range {1 .. 5}. Then the encoding is the length
+/// > of heightBytes encoded as one byte, followed by heightBytes itself.
+///
+/// <https://zips.z.cash/protocol/protocol.pdf#txnconsensus>
+pub const MAX_COINBASE_HEIGHT_DATA_LEN: usize = 6;
 
 /// The minimum length of the coinbase data.
 ///
@@ -221,6 +231,17 @@ pub(crate) fn write_coinbase_height<W: io::Write>(
         panic!("Invalid coinbase height");
     }
     Ok(())
+}
+
+impl Height {
+    /// Get the size of `Height` when serialized into a coinbase input script.
+    pub fn coinbase_zcash_serialized_size(&self) -> usize {
+        let mut writer = FakeWriter(0);
+        let empty_data = CoinbaseData(Vec::new());
+
+        write_coinbase_height(*self, &empty_data, &mut writer).expect("writer should never fail");
+        writer.0
+    }
 }
 
 impl ZcashSerialize for Input {

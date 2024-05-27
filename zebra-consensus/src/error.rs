@@ -349,3 +349,11 @@ pub enum BlockError {
         source: amount::Error,
     },
 }
+
+impl BlockError {
+    /// Returns `true` if this is definitely a duplicate request.
+    /// Some duplicate requests might not be detected, and therefore return `false`.
+    pub fn is_duplicate_request(&self) -> bool {
+        matches!(self, BlockError::AlreadyInChain(..))
+    }
+}

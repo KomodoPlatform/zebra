@@ -11,7 +11,7 @@
 //! the actual work represented by the block header hash.
 #![allow(clippy::unit_arg)]
 
-use crate::{block, parameters::Network};
+use crate::{block, parameters::Network, BoxError};
 
 use std::{
     cmp::{Ordering, PartialEq, PartialOrd},
@@ -22,6 +22,8 @@ use std::{
     ops::Div,
     ops::Mul,
 };
+
+use hex::{ToHex, FromHex};
 
 pub use crate::work::u256::U256;
 
@@ -258,6 +260,70 @@ impl CompactDifficulty {
         let expanded = self.to_expanded()?;
         Work::try_from(expanded).ok()
     }
+
+    /// Return the difficulty bytes in big-endian byte-order.
+    ///
+    /// Zebra displays difficulties in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn bytes_in_display_order(&self) -> [u8; 4] {
+        self.0.to_be_bytes()
+    }
+
+    /// Convert bytes in big-endian byte-order into a [`CompactDifficulty`].
+    ///
+    /// Zebra displays difficulties in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    ///
+    /// Returns an error if the difficulty value is invalid.
+    pub fn from_bytes_in_display_order(
+        bytes_in_display_order: &[u8; 4],
+    ) -> Result<CompactDifficulty, BoxError> {
+        let internal_byte_order = u32::from_be_bytes(*bytes_in_display_order);
+
+        let difficulty = CompactDifficulty(internal_byte_order);
+
+        if difficulty.to_expanded().is_none() {
+            return Err("invalid difficulty value".into());
+        }
+
+        Ok(difficulty)
+    }
+}
+
+impl fmt::Display for CompactDifficulty {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(&self.encode_hex::<String>())
+    }
+}
+
+impl ToHex for &CompactDifficulty {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+impl ToHex for CompactDifficulty {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+impl FromHex for CompactDifficulty {
+    type Error = BoxError;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let bytes_in_display_order = <[u8; 4]>::from_hex(hex)?;
+
+        CompactDifficulty::from_bytes_in_display_order(&bytes_in_display_order)
+    }
 }
 
 impl TryFrom<ExpandedDifficulty> for Work {
@@ -394,6 +460,64 @@ impl ExpandedDifficulty {
             unreachable!("converted CompactDifficulty values must be valid")
         }
     }
+    
+    /// Return the difficulty bytes in big-endian byte-order,
+    /// suitable for printing out byte by byte.
+    ///
+    /// Zebra displays difficulties in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    pub fn bytes_in_display_order(&self) -> [u8; 32] {
+        let mut reversed_bytes = [0; 32];
+        self.0.to_big_endian(&mut reversed_bytes);
+
+        reversed_bytes
+    }
+
+    /// Convert bytes in big-endian byte-order into an [`ExpandedDifficulty`].
+    ///
+    /// Zebra displays difficulties in big-endian byte-order,
+    /// following the u256 convention set by Bitcoin and zcashd.
+    ///
+    /// Preserves the exact difficulty value represented by the bytes,
+    /// even if it can't be generated from a [`CompactDifficulty`].
+    /// This means a round-trip conversion to [`CompactDifficulty`] can be lossy.
+    pub fn from_bytes_in_display_order(bytes_in_display_order: &[u8; 32]) -> ExpandedDifficulty {
+        let internal_byte_order = U256::from_big_endian(bytes_in_display_order);
+
+        ExpandedDifficulty(internal_byte_order)
+    }
+}
+
+impl ToHex for &ExpandedDifficulty {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        self.bytes_in_display_order().encode_hex_upper()
+    }
+}
+
+impl ToHex for ExpandedDifficulty {
+    fn encode_hex<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex()
+    }
+
+    fn encode_hex_upper<T: FromIterator<char>>(&self) -> T {
+        (&self).encode_hex_upper()
+    }
+}
+
+impl FromHex for ExpandedDifficulty {
+    type Error = <[u8; 32] as FromHex>::Error;
+
+    fn from_hex<T: AsRef<[u8]>>(hex: T) -> Result<Self, Self::Error> {
+        let bytes_in_display_order = <[u8; 32]>::from_hex(hex)?;
+
+        Ok(ExpandedDifficulty::from_bytes_in_display_order(
+            &bytes_in_display_order,
+        ))
+    }
 }
 
 impl From<U256> for ExpandedDifficulty {
@@ -495,6 +619,13 @@ impl std::ops::Add for Work {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 /// Partial work used to track relative work in non-finalized chains
 pub struct PartialCumulativeWork(u128);
+
+impl PartialCumulativeWork {
+    /// Return the inner `u128` value.
+    pub fn as_u128(self) -> u128 {
+        self.0
+    }
+}
 
 impl From<Work> for PartialCumulativeWork {
     fn from(work: Work) -> Self {

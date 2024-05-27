@@ -39,6 +39,7 @@ mod tests;
 
 use downloads::{AlwaysHedge, Downloads};
 
+pub use downloads::VERIFICATION_PIPELINE_SCALING_MULTIPLIER;
 pub use gossip::{gossip_best_tip_block_hashes, BlockGossipError};
 pub use progress::show_block_chain_progress;
 pub use recent_sync_lengths::RecentSyncLengths;
@@ -211,7 +212,7 @@ where
         + Clone
         + 'static,
     ZS::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError>
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError>
         + Send
         + Sync
         + Clone
@@ -291,7 +292,7 @@ where
         + Clone
         + 'static,
     ZS::Future: Send,
-    ZV: Service<Arc<Block>, Response = block::Hash, Error = BoxError>
+    ZV: Service<zebra_consensus::Request, Response = block::Hash, Error = BoxError>
         + Send
         + Sync
         + Clone
@@ -999,19 +1000,21 @@ where
         match e {
             // Structural matches: downcasts
             BlockDownloadVerifyError::Invalid {
-                error: VerifyChainError::Checkpoint(VerifyCheckpointError::AlreadyVerified { .. }),
+                //error: VerifyChainError::Checkpoint(VerifyCheckpointError::AlreadyVerified { .. }),
+                error: VerifyChainError::Checkpoint{ source },
                 ..
-            } => {
+            } if matches!(**source, VerifyCheckpointError::AlreadyVerified { .. }) => {
                 debug!(error = ?e, "block was already verified, possibly from a previous sync run, continuing");
                 false
             }
             BlockDownloadVerifyError::Invalid {
-                error:
+                /*error:
                     VerifyChainError::Block(VerifyBlockError::Block {
                         source: BlockError::AlreadyInChain(_, _),
-                    }),
+                    }),*/
+                error: VerifyChainError::Block{ source },
                 ..
-            } => {
+            } if matches!(**source, VerifyBlockError::Block{ source: BlockError::AlreadyInChain { .. } }) => {
                 debug!(error = ?e, "block is already in chain, possibly from a previous sync run, continuing");
                 false
             }
@@ -1041,13 +1044,14 @@ where
 
             // String matches
             BlockDownloadVerifyError::Invalid {
-                error: VerifyChainError::Block(VerifyBlockError::Commit(ref source)),
+                error: VerifyChainError::Block{ source },
                 ..
-            } if format!("{:?}", source).contains("block is already committed to the state") => {
+            } if matches!(**source, VerifyBlockError::Commit(ref commit_source) if format!("{:?}", commit_source).contains("block is already committed to the state")) => {
                 // TODO: improve this by checking the type (#2908)
                 debug!(error = ?e, "block is already committed, possibly from a previous sync run, continuing");
                 false
             }
+            
             BlockDownloadVerifyError::DownloadFailed { ref error, .. }
                 if format!("{:?}", error).contains("NotFound") =>
             {

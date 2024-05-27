@@ -26,7 +26,7 @@
 //!
 //! If this test fails, run:
 //! ```sh
-//! cargo insta test --review --delete-unreferenced-snapshots
+//! cargo insta test --review
 //! ```
 //! to update the test snapshots, then commit the `test_*.snap` files using git.
 
@@ -150,10 +150,10 @@ impl TransactionData {
 }
 
 /// Snapshot test for finalized block and transaction data.
-#[ignore]  // Blocks are different in Komodo. TODO fix for KMD net
+#[ignore = "fix for komodo blocks"] // Blocks are different in Komodo. TODO fix for KMD net
 #[test]
 fn test_block_and_transaction_data() {
-    zebra_test::init();
+    let _init_guard = zebra_test::init();
 
     test_block_and_transaction_data_with_network(Mainnet);
     test_block_and_transaction_data_with_network(Testnet);
@@ -166,7 +166,12 @@ fn test_block_and_transaction_data_with_network(network: Network) {
     let mut net_suffix = network.to_string();
     net_suffix.make_ascii_lowercase();
 
-    let mut state = FinalizedState::new(&Config::ephemeral(), network);
+    let mut state = FinalizedState::new(
+        &Config::ephemeral(),
+        network,
+        #[cfg(feature = "elasticsearch")]
+        None,
+    );
 
     // Assert that empty databases are the same, regardless of the network.
     let mut settings = insta::Settings::clone_current();
@@ -197,7 +202,7 @@ fn test_block_and_transaction_data_with_network(network: Network) {
             .expect("test block is valid");
 
         let mut settings = insta::Settings::clone_current();
-        settings.set_snapshot_suffix(format!("{}_{}", net_suffix, height));
+        settings.set_snapshot_suffix(format!("{net_suffix}_{height}"));
 
         settings.bind(|| snapshot_block_and_transaction_data(&state));
         settings.bind(|| snapshot_transparent_address_data(&state, height));
@@ -403,13 +408,11 @@ fn snapshot_block_and_transaction_data(state: &FinalizedState) {
         // By definition, all of these lists should be in chain order.
         assert!(
             is_sorted(&stored_block_hashes),
-            "unsorted: {:?}",
-            stored_block_hashes
+            "unsorted: {stored_block_hashes:?}"
         );
         assert!(
             is_sorted(&stored_transactions),
-            "unsorted: {:?}",
-            stored_transactions
+            "unsorted: {stored_transactions:?}"
         );
 
         // The blocks, trees, transactions, and their hashes are in height/index order,
@@ -463,6 +466,7 @@ fn snapshot_transparent_address_data(state: &FinalizedState, height: u32) {
         .count();
 
     let addresses: Vec<transparent::Address> = addresses
+        .map(|result| result.expect("unexpected database error"))
         .map(|(key, _value)| transparent::Address::from_bytes(key))
         .collect();
 
@@ -513,17 +517,13 @@ fn snapshot_transparent_address_data(state: &FinalizedState, height: u32) {
         // Check that the lists are in chain order
         assert!(
             is_sorted(&stored_utxo_locations),
-            "unsorted: {:?}\n\
-             for address: {:?}",
-            stored_utxo_locations,
-            address,
+            "unsorted: {stored_utxo_locations:?}\n\
+             for address: {address:?}",
         );
         assert!(
             is_sorted(&stored_transaction_locations),
-            "unsorted: {:?}\n\
-             for address: {:?}",
-            stored_transaction_locations,
-            address,
+            "unsorted: {stored_transaction_locations:?}\n\
+             for address: {address:?}",
         );
 
         // The default raw data serialization is very verbose, so we hex-encode the bytes.
