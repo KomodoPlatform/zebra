@@ -80,6 +80,9 @@ pub struct Config {
     ///   next connection attempt.
     #[serde(with = "humantime_serde")]
     pub crawl_new_peer_interval: Duration,
+
+    /// komodo added: do not use metrics for getpeerinfo rpc, if other metrics exporter is used
+    pub dont_use_metrics_for_getpeerinfo: bool,
 }
 
 impl Config {
@@ -283,6 +286,8 @@ impl Default for Config {
             // But Zebra should only make a small number of initial outbound connections,
             // so that idle peers don't use too many connection slots.
             peerset_initial_target_size: 25,
+
+            dont_use_metrics_for_getpeerinfo: false, // default is to use metrics for getpeerinfo
         }
     }
 }
@@ -302,6 +307,7 @@ impl<'de> Deserialize<'de> for Config {
             peerset_initial_target_size: usize,
             #[serde(alias = "new_peer_interval", with = "humantime_serde")]
             crawl_new_peer_interval: Duration,
+            dont_use_metrics_for_getpeerinfo: bool,
         }
 
         impl Default for DConfig {
@@ -314,6 +320,7 @@ impl<'de> Deserialize<'de> for Config {
                     initial_testnet_peers: config.initial_testnet_peers,
                     peerset_initial_target_size: config.peerset_initial_target_size,
                     crawl_new_peer_interval: config.crawl_new_peer_interval,
+                    dont_use_metrics_for_getpeerinfo: config.dont_use_metrics_for_getpeerinfo,
                 }
             }
         }
@@ -339,6 +346,7 @@ impl<'de> Deserialize<'de> for Config {
             initial_testnet_peers: config.initial_testnet_peers,
             peerset_initial_target_size: config.peerset_initial_target_size,
             crawl_new_peer_interval: config.crawl_new_peer_interval,
+            dont_use_metrics_for_getpeerinfo: config.dont_use_metrics_for_getpeerinfo,
         })
     }
 }

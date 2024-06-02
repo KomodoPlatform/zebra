@@ -26,7 +26,7 @@ use crate::{
     server::{compatibility::FixHttpRequestMiddleware, tracing_middleware::TracingMiddleware},
 };
 
-pub use zebra_network::address_book::InboundConns;
+pub use zebra_network::komodo_peer_stat::PeerStats;
 
 pub mod compatibility;
 mod tracing_middleware;
@@ -45,7 +45,7 @@ impl RpcServer {
         latest_chain_tip: Tip,
         network: Network,
         address_book: Arc<std::sync::Mutex<AddressBook>>,
-        inbound_conns: Arc<std::sync::Mutex<InboundConns>>,
+        peer_stats: Arc<std::sync::Mutex<PeerStats>>,
     ) -> (JoinHandle<()>, JoinHandle<()>)
     where
         Version: ToString,
@@ -68,7 +68,7 @@ impl RpcServer {
 
             // Initialize the rpc methods with the zebra version
             let (rpc_impl, rpc_tx_queue_task_handle) =
-                RpcImpl::new(app_version, mempool, state, latest_chain_tip, network, address_book, inbound_conns);
+                RpcImpl::new(app_version, mempool, state, latest_chain_tip, network, address_book, peer_stats);
 
             // Create handler compatible with V1 and V2 RPC protocols
             let mut io: MetaIoHandler<(), _> =

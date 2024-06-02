@@ -661,7 +661,7 @@ async fn setup(
 
         ..NetworkConfig::default()
     };
-    let (mut peer_set, address_book, _inbound_conns) = zebra_network::init(
+    let (mut peer_set, address_book, _peer_stats) = zebra_network::init(
         network_config,
         inbound_service.clone(),
         latest_chain_tip.clone(),

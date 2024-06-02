@@ -51,7 +51,7 @@ async fn test_rpc_response_data_for_network(network: Network) {
         latest_chain_tip,
         network,
         Arc::new(std::sync::Mutex::new(AddressBook::new(SocketAddr::from_str("0.0.0.0:0").unwrap(), Mainnet, Span::none()))),
-        Arc::new(std::sync::Mutex::new(InboundConns::new(Mainnet))),
+        Arc::new(std::sync::Mutex::new(PeerStats::new(Mainnet))),
     );
 
     // Start snapshots of RPC responses.

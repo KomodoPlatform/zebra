@@ -45,8 +45,11 @@ const MAINNET_CHECKPOINTS: &str = include_str!("main-checkpoints.txt");
 
 // KMD working testnets
 const TESTNET_CHECKPOINTS: &str =    //ver4 testnet dimxy genesis
-                                     "0 00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08\n\
-                                     64 0480916fa2b9a1df4bf94bf406c2df7c424756d0bc28969f5465731031496946\n"; 
+                                    // "0 00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08\n\
+                                    // 64 0480916fa2b9a1df4bf94bf406c2df7c424756d0bc28969f5465731031496946\n"; 
+
+                                    "0 00040fe8ec8471911baa1db1266ea15dd06b4a8a5c453883c000b031973dce08\n\
+                                    64 00a8d9d7d3ae6f6a264a75a2d31b8a4c980b8517ec3a190860dcf5fb27e442a7\n";
 
                                      // decker genesis dimxy blocks 's testnet
                                      // "0 e46e999d6de5ef95427ea51b8242ef7949de22b340b6a484ff154b9991ec9452\n\

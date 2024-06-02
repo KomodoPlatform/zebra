@@ -151,6 +151,7 @@ mod peer;
 mod peer_set;
 mod policies;
 mod protocol;
+pub mod komodo_peer_stat;
 
 #[cfg(feature = "tor")]
 pub use crate::isolated::tor::connect_isolated_tor;

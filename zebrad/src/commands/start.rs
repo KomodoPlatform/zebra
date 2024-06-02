@@ -123,7 +123,7 @@ impl StartCmd {
                 setup_rx,
             ));
 
-        let (peer_set, address_book, inbound_conns) =
+        let (peer_set, address_book, peer_stats) =
             zebra_network::init(config.network.clone(), inbound, latest_chain_tip.clone()).await;
 
         info!("initializing verifiers");
@@ -171,7 +171,7 @@ impl StartCmd {
             latest_chain_tip.clone(),
             config.network.network,
             Arc::clone(&address_book),
-            Arc::clone(&inbound_conns),
+            Arc::clone(&peer_stats),
         );
 
         let setup_data = InboundSetupData {
