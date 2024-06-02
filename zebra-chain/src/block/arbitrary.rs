@@ -454,6 +454,7 @@ impl Block {
                         &mut chain_value_pools,
                         &mut utxos,
                         check_transparent_coinbase_spend,
+                        None,
                     ) {
                         // The FinalizedState does not update the note commitment trees with the genesis block,
                         // because it doesn't need to (the trees are not used at that point) and updating them
@@ -566,7 +567,8 @@ impl Block {
 /// Fix `transaction` so it obeys more consensus rules.
 ///
 /// Spends [`transparent::OutPoint`]s from `utxos`, and adds newly created outputs.
-///
+/// known_utxos are added by komodo if we want a concrete utxos set to be added
+/// 
 /// If the transaction can't be fixed, returns `None`.
 pub fn fix_generated_transaction<F, T, E>(
     network: Network,
@@ -577,6 +579,7 @@ pub fn fix_generated_transaction<F, T, E>(
     chain_value_pools: &mut ValueBalance<NonNegative>,
     utxos: &mut HashMap<transparent::OutPoint, transparent::OrderedUtxo>,
     check_transparent_coinbase_spend: F,
+    known_utxos: Option<Vec<(transparent::OutPoint, transparent::OrderedUtxo)>>,
 ) -> Option<Transaction>
 where
     F: Fn(
@@ -594,18 +597,24 @@ where
 
     // fixup the transparent spends
     let original_inputs = transaction.inputs().to_vec();
-    for mut input in original_inputs.into_iter() {
+    for (i, mut input) in original_inputs.into_iter().enumerate() {
         if input.outpoint().is_some() {
             // the transparent chain value pool is the sum of unspent UTXOs,
             // so we don't need to check it separately, because we only spend unspent UTXOs
-            if let Some(selected_outpoint) = find_valid_utxo_for_spend(
-                network,
-                &mut transaction,
-                &mut spend_restriction,
-                height,
-                utxos,
-                check_transparent_coinbase_spend,
-            ) {
+            let found_outpoint = if known_utxos.is_some() && i < known_utxos.as_ref().unwrap().len() {
+                Some(known_utxos.as_ref().unwrap()[i].0)
+            } else {
+                find_valid_utxo_for_spend(
+                    network,
+                    &mut transaction,
+                    &mut spend_restriction,
+                    height,
+                    utxos,
+                    check_transparent_coinbase_spend,
+                )
+            };
+
+            if let Some(selected_outpoint) = found_outpoint {
                 input.set_outpoint(selected_outpoint);
                 new_inputs.push(input);
 
@@ -709,7 +718,6 @@ where
         {
             *transaction.outputs_mut() = Vec::new();
             *spend_restriction = delete_transparent_outputs;
-
             return Some(*candidate_outpoint);
         }
     }
